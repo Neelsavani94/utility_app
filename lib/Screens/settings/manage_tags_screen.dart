@@ -421,11 +421,11 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
       },
       child: Container(
         decoration: BoxDecoration(
-          color: isDark ? colorScheme.surface.withOpacity(0.15) : Colors.white,
+          color: isDark ? colorScheme.surface.withOpacity(0.6) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isDark
-                ? colorScheme.outline.withOpacity(0.1)
+                ? colorScheme.outline.withOpacity(0.3)
                 : colorScheme.outline.withOpacity(0.08),
             width: 1,
           ),

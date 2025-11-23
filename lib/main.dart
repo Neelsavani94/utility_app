@@ -15,6 +15,9 @@ import 'Screens/settings/settings_screen.dart';
 import 'Screens/settings/manage_tags_screen.dart';
 import 'Screens/premium/premium_screen.dart';
 import 'Screens/move_copy/move_copy_screen.dart';
+import 'Screens/extract_text/extract_text_screen.dart';
+import 'Screens/qr_reader/qr_reader_screen.dart';
+import 'Screens/qr_generator/qr_generator_screen.dart';
 import 'Theme/theme.dart';
 
 void main() async {
@@ -67,6 +70,18 @@ class MyApp extends StatelessWidget {
                   action: arguments['action'],
                 );
               },
+            ),
+            GetPage(
+              name: AppRoutes.extractText,
+              page: () => const ExtractTextScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.qrReader,
+              page: () => const QRReaderScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.qrGenerator,
+              page: () => const QRGeneratorScreen(),
             ),
           ],
           unknownRoute: GetPage(

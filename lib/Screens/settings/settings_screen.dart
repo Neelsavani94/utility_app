@@ -109,7 +109,7 @@ class SettingsScreen extends StatelessWidget {
                   Divider(
                     height: 1,
                     thickness: 1,
-                    color: colorScheme.outline.withOpacity(0.1),
+                    color: colorScheme.outline.withOpacity(0.3),
                   ),
 
                   const SizedBox(height: AppConstants.spacingM),
@@ -154,70 +154,73 @@ class SettingsScreen extends StatelessWidget {
     ColorScheme colorScheme,
     bool isDark,
   ) {
-    return Container(
-      margin: const EdgeInsets.all(AppConstants.spacingM),
-      padding: const EdgeInsets.all(AppConstants.spacingL),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [colorScheme.primary, colorScheme.secondary],
+    return InkWell(
+      focusColor: Colors.transparent,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      onTap: () => NavigationService.toPremium(),
+      child: Container(
+        margin: const EdgeInsets.all(AppConstants.spacingM),
+        padding: const EdgeInsets.all(AppConstants.spacingL),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [colorScheme.primary, colorScheme.secondary],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.primary.withOpacity(0.3),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+              spreadRadius: 0,
+            ),
+          ],
         ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: colorScheme.primary.withOpacity(0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-            spreadRadius: 0,
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // Icon
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.yellow.shade800,
-              shape: BoxShape.circle,
+        child: Row(
+          children: [
+            // Icon
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: Colors.yellow.shade800,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.star_rounded, color: Colors.white, size: 28),
             ),
-            child: Icon(Icons.star_rounded, color: Colors.white, size: 28),
-          ),
-          const SizedBox(width: AppConstants.spacingM),
-          // Text
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Go to PREMIUM!',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
+            const SizedBox(width: AppConstants.spacingM),
+            // Text
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Go to PREMIUM!',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.3,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Enjoy all the benefits',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w400,
+                  const SizedBox(height: 4),
+                  Text(
+                    'Enjoy all the benefits',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          // Upgrade Button
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () => NavigationService.toPremium(),
-              borderRadius: BorderRadius.circular(12),
+            // Upgrade Button
+            Material(
+              color: Colors.transparent,
               child: Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppConstants.spacingM,
@@ -237,8 +240,8 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -251,10 +254,10 @@ class SettingsScreen extends StatelessWidget {
   ) {
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? colorScheme.surface.withOpacity(0.15) : Colors.white,
+        color: isDark ? colorScheme.surface.withOpacity(0.35) : Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: colorScheme.outline.withOpacity(0.08),
+          color: colorScheme.outline.withOpacity(0.3),
           width: 1,
         ),
       ),
@@ -290,7 +293,7 @@ class SettingsScreen extends StatelessWidget {
               ? null
               : Border(
                   bottom: BorderSide(
-                    color: colorScheme.outline.withOpacity(0.08),
+                    color: colorScheme.outline.withOpacity(0.3),
                     width: 1,
                   ),
                 ),

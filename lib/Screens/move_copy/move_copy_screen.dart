@@ -170,9 +170,7 @@ class MoveCopyScreen extends StatelessWidget {
           horizontal: AppConstants.spacingS,
         ),
         decoration: BoxDecoration(
-          color: isDark
-              ? colorScheme.surface.withOpacity(0.2)
-              : colorScheme.surface.withOpacity(0.6),
+          color: colorScheme.surface.withOpacity(0.6),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: colorScheme.outline.withOpacity(0.08),
@@ -226,48 +224,28 @@ class MoveCopyScreen extends StatelessWidget {
                           maxLines: 1,
                         ),
                       ),
-                      const SizedBox(width: AppConstants.spacingS),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primary.withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          document.category,
-                          style: TextStyle(
-                            color: colorScheme.primary,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
-                      ),
                     ],
                   ),
                 ],
               ),
             ),
             // Action Icons
-            IconButton(
-              icon: Icon(Icons.share_rounded, size: 20),
-              onPressed: () {
-                // Handle share
-              },
-              color: colorScheme.onSurface.withOpacity(0.5),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-            IconButton(
-              icon: Icon(Icons.more_vert_rounded, size: 20),
-              onPressed: () {},
-              color: colorScheme.onSurface.withOpacity(0.5),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: colorScheme.primary.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                document.category,
+                style: TextStyle(
+                  color: colorScheme.primary,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
             ),
           ],
         ),

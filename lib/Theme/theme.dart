@@ -3,17 +3,25 @@ import 'package:flutter/material.dart';
 class AppTheme {
   // Unique & Best Color Palette for ScanifyAI
   // Primary: Vibrant Purple-Indigo (modern, premium, creative)
-  static const Color primaryLight = Color(0xFF6C5CE7); // Vibrant Purple-Indigo - Premium & Creative
-  static const Color primaryDark = Color(0xFFA78BFA); // Lighter Purple for dark mode
-  
+  static const Color primaryLight = Color(
+    0xFF6C5CE7,
+  ); // Vibrant Purple-Indigo - Premium & Creative
+  static const Color primaryDark = Color(
+    0xFF6C5CE7,
+  ); // Lighter Purple for dark mode
+
   // Secondary: Soft Purple-Magenta (creative, premium)
   static const Color accentLight = Color(0xFFAF52DE); // Purple-Magenta
-  static const Color accentDark = Color(0xFFBF5AF2); // Lighter Purple for dark mode
-  
+  static const Color accentDark = Color(
+    0xFFBF5AF2,
+  ); // Lighter Purple for dark mode
+
   // Tertiary: Emerald Green (success, growth)
   static const Color tertiaryLight = Color(0xFF30D158); // Green
-  static const Color tertiaryDark = Color(0xFF32D74B); // Lighter Green for dark mode
-  
+  static const Color tertiaryDark = Color(
+    0xFF32D74B,
+  ); // Lighter Green for dark mode
+
   // Neutral backgrounds - Ultra minimal & clean
   static const Color bgLight = Color(0xFFFFFFFF);
   static const Color bgLightSecondary = Color(0xFFF5F7FA);

@@ -93,7 +93,7 @@ class AppConstants {
     {
       'label': 'eSign',
       'icon': Icons.edit_rounded,
-      'color': Color(0xFF00E676), // Vibrant Green
+      'color': Color(0xFF003C1E), // Vibrant Green
     },
     {
       'label': 'Watermark',
@@ -123,12 +123,12 @@ class AppConstants {
     {
       'label': 'QR Reader',
       'icon': Icons.qr_code_scanner_rounded,
-      'color': Color(0xFF00E676), // Green
+      'color': Color(0xFF003C3A), // Green
     },
     {
       'label': 'Extract Texts',
       'icon': Icons.text_fields_rounded,
-      'color': Color(0xFF03A9F4), // Light Blue
+      'color': Color(0xFF03A5C4), // Light Blue
     },
     {
       'label': 'Import Files',
@@ -137,4 +137,3 @@ class AppConstants {
     },
   ];
 }
-

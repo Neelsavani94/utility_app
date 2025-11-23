@@ -226,9 +226,9 @@ class _PremiumScreenState extends State<PremiumScreen>
         boxShadow: [
           BoxShadow(
             color: const Color(0xFFFFD700).withOpacity(0.4),
-            blurRadius: 30,
-            offset: const Offset(0, 10),
-            spreadRadius: 5,
+            blurRadius: 3,
+            offset: const Offset(0, 3),
+            spreadRadius: 0.2,
           ),
         ],
       ),
@@ -317,13 +317,13 @@ class _PremiumScreenState extends State<PremiumScreen>
                 color: isSelected
                     ? colorScheme.primary.withOpacity(0.1)
                     : (isDark
-                          ? colorScheme.surface.withOpacity(0.15)
+                          ? colorScheme.surface.withOpacity(0.6)
                           : Colors.white),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: isSelected
                       ? colorScheme.primary
-                      : colorScheme.outline.withOpacity(0.08),
+                      : colorScheme.outline.withOpacity(0.6),
                   width: isSelected ? 2 : 1,
                 ),
                 boxShadow: isSelected
@@ -337,7 +337,7 @@ class _PremiumScreenState extends State<PremiumScreen>
                     : [
                         BoxShadow(
                           color: isDark
-                              ? Colors.black.withOpacity(0.2)
+                              ? Colors.black.withOpacity(0.6)
                               : Colors.black.withOpacity(0.05),
                           blurRadius: 8,
                           offset: const Offset(0, 2),
@@ -429,7 +429,7 @@ class _PremiumScreenState extends State<PremiumScreen>
                       border: Border.all(
                         color: isSelected
                             ? colorScheme.primary
-                            : colorScheme.outline.withOpacity(0.3),
+                            : colorScheme.outline.withOpacity(0.6),
                         width: 2,
                       ),
                       color: isSelected
@@ -545,14 +545,6 @@ class _PremiumScreenState extends State<PremiumScreen>
           colors: [colorScheme.primary, colorScheme.secondary],
         ),
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: colorScheme.primary.withOpacity(0.4),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-            spreadRadius: 2,
-          ),
-        ],
       ),
       child: Material(
         color: Colors.transparent,

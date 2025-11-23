@@ -74,5 +74,25 @@ class NavigationService {
   static Future<dynamic>? toMoveCopy({Map<String, dynamic>? arguments}) {
     return navigateTo(AppRoutes.moveCopy, arguments: arguments);
   }
+
+  static Future<dynamic>? toESignList() {
+    return navigateTo(AppRoutes.esignList);
+  }
+
+  static Future<dynamic>? toESignCreate() {
+    return navigateTo(AppRoutes.esignCreate);
+  }
+
+  static Future<dynamic>? toExtractText() {
+    return navigateTo(AppRoutes.extractText);
+  }
+
+  static Future<dynamic>? toQRReader() {
+    return navigateTo(AppRoutes.qrReader);
+  }
+
+  static Future<dynamic>? toQRGenerator() {
+    return navigateTo(AppRoutes.qrGenerator);
+  }
 }
 

@@ -110,17 +110,22 @@ class ToolsScreen extends StatelessWidget {
       },
       child: GestureDetector(
         onTap: () {
-          // Handle tool tap
+          if (label == 'Extract Texts') {
+            NavigationService.toExtractText();
+          } else if (label == 'QR Reader') {
+            NavigationService.toQRReader();
+          } else if (label == 'QR Generate') {
+            NavigationService.toQRGenerator();
+          }
+          // Handle other tool taps
         },
         child: Container(
           decoration: BoxDecoration(
-            color: isDark
-                ? colorScheme.surface.withOpacity(0.15)
-                : Colors.white,
+            color: isDark ? colorScheme.surface.withOpacity(0.5) : Colors.white,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: isDark
-                  ? colorScheme.outline.withOpacity(0.1)
+                  ? colorScheme.outline.withOpacity(0.3)
                   : colorScheme.outline.withOpacity(0.08),
               width: 1,
             ),

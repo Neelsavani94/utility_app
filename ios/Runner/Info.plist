@@ -45,5 +45,20 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Permissions for image and document picking -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>We need access to your photo library to select images for text extraction.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>We need access to save images to your photo library.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>We need access to your camera to scan QR codes and barcodes, and to take photos for text extraction.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>We need access to your documents to select PDF files for text extraction.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We need access to your microphone for video recording features.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
 </dict>
 </plist>
