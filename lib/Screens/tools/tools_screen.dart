@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
+import '../scan_pdf/scan_pdf_bottom_sheet.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 
 class ToolsScreen extends StatelessWidget {
   const ToolsScreen({super.key});
@@ -116,6 +119,8 @@ class ToolsScreen extends StatelessWidget {
             NavigationService.toQRReader();
           } else if (label == 'QR Generate') {
             NavigationService.toQRGenerator();
+          } else if (label == 'Scan PDF') {
+            _showScanPDFOptions(context, colorScheme, isDark);
           }
           // Handle other tool taps
         },
@@ -186,6 +191,83 @@ class ToolsScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _showScanPDFOptions(
+    BuildContext context,
+    ColorScheme colorScheme,
+    bool isDark,
+  ) {
+    final navigatorContext = context; // Store original context
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (bottomSheetContext) => ScanPDFBottomSheet(
+        onSourceSelected: (source) async {
+          // Close bottom sheet first
+          Navigator.of(bottomSheetContext).pop();
+          
+          // Small delay to ensure bottom sheet is closed
+          await Future.delayed(const Duration(milliseconds: 300));
+          
+          final ImagePicker picker = ImagePicker();
+          try {
+            List<XFile> pickedFiles = [];
+            
+            if (source == ImageSource.camera) {
+              // For camera, pick single image
+              final XFile? pickedFile = await picker.pickImage(
+                source: source,
+                imageQuality: 85,
+              );
+              if (pickedFile != null) {
+                pickedFiles = [pickedFile];
+              }
+            } else {
+              // For gallery, pick multiple images
+              pickedFiles = await picker.pickMultiImage(
+                imageQuality: 85,
+              );
+            }
+
+            if (pickedFiles.isNotEmpty) {
+              final imageFiles = pickedFiles.map((f) => File(f.path)).toList();
+              // Navigate to filter screen using original context
+              if (navigatorContext.mounted) {
+                // Use a small delay to ensure everything is ready
+                await Future.delayed(const Duration(milliseconds: 100));
+                NavigationService.toScanPDFFilter(imageFiles: imageFiles);
+              }
+            } else {
+              // User cancelled - show message if context is still valid
+              if (navigatorContext.mounted) {
+                ScaffoldMessenger.of(navigatorContext).showSnackBar(
+                  SnackBar(
+                    content: const Text('No images selected'),
+                    backgroundColor: colorScheme.surfaceVariant,
+                    behavior: SnackBarBehavior.floating,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            }
+          } catch (e) {
+            // Show error if context is still valid
+            if (navigatorContext.mounted) {
+              ScaffoldMessenger.of(navigatorContext).showSnackBar(
+                SnackBar(
+                  content: Text('Error picking images: $e'),
+                  backgroundColor: colorScheme.error,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          }
+        },
       ),
     );
   }

@@ -18,6 +18,11 @@ import 'Screens/move_copy/move_copy_screen.dart';
 import 'Screens/extract_text/extract_text_screen.dart';
 import 'Screens/qr_reader/qr_reader_screen.dart';
 import 'Screens/qr_generator/qr_generator_screen.dart';
+import 'Screens/scan_pdf/scan_pdf_filter_screen.dart';
+import 'Screens/scan_pdf/scan_pdf_progress_screen.dart';
+import 'Screens/scan_pdf/scan_pdf_viewer_screen.dart';
+import 'dart:io';
+import 'dart:typed_data';
 import 'Theme/theme.dart';
 
 void main() async {
@@ -82,6 +87,45 @@ class MyApp extends StatelessWidget {
             GetPage(
               name: AppRoutes.qrGenerator,
               page: () => const QRGeneratorScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.scanPDFFilter,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                return ScanPDFFilterScreen(
+                  imageFiles: (arguments!['imageFiles'] as List)
+                      .map((e) => e as File)
+                      .toList(),
+                );
+              },
+            ),
+            GetPage(
+              name: AppRoutes.scanPDFProgress,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                return ScanPDFProgressScreen(
+                  imageFiles: (arguments!['imageFiles'] as List)
+                      .map((e) => e as File)
+                      .toList(),
+                  filter: arguments['filter'] as String,
+                  filteredImages: arguments['filteredImages'] != null
+                      ? (arguments['filteredImages'] as Map<String, dynamic>)
+                          .map((key, value) => MapEntry(
+                                key,
+                                value is Uint8List ? value : null,
+                              ))
+                      : null,
+                );
+              },
+            ),
+            GetPage(
+              name: AppRoutes.scanPDFViewer,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                return ScanPDFViewerScreen(
+                  pdfPath: arguments!['pdfPath'] as String,
+                );
+              },
             ),
           ],
           unknownRoute: GetPage(

@@ -13,6 +13,10 @@ class AppRoutes {
   static const String extractText = '/extract-text';
   static const String qrReader = '/qr-reader';
   static const String qrGenerator = '/qr-generator';
+  static const String scanPDF = '/scan-pdf';
+  static const String scanPDFFilter = '/scan-pdf-filter';
+  static const String scanPDFProgress = '/scan-pdf-progress';
+  static const String scanPDFViewer = '/scan-pdf-viewer';
   
   // Prevent instantiation
   AppRoutes._();

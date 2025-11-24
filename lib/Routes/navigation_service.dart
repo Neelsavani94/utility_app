@@ -94,5 +94,38 @@ class NavigationService {
   static Future<dynamic>? toQRGenerator() {
     return navigateTo(AppRoutes.qrGenerator);
   }
+
+  static Future<dynamic>? toScanPDF() {
+    return navigateTo(AppRoutes.scanPDF);
+  }
+
+  static Future<dynamic>? toScanPDFFilter({required List<dynamic> imageFiles}) {
+    return navigateTo(
+      AppRoutes.scanPDFFilter,
+      arguments: {'imageFiles': imageFiles},
+    );
+  }
+
+  static Future<dynamic>? toScanPDFProgress({
+    required List<dynamic> imageFiles,
+    required String filter,
+    Map<String, dynamic>? filteredImages,
+  }) {
+    return navigateTo(
+      AppRoutes.scanPDFProgress,
+      arguments: {
+        'imageFiles': imageFiles,
+        'filter': filter,
+        'filteredImages': filteredImages,
+      },
+    );
+  }
+
+  static Future<dynamic>? toScanPDFViewer({required String pdfPath}) {
+    return navigateTo(
+      AppRoutes.scanPDFViewer,
+      arguments: {'pdfPath': pdfPath},
+    );
+  }
 }
 
