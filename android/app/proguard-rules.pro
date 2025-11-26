@@ -6,6 +6,13 @@
 -keep class com.google.mlkit.** { *; }
 -keep class com.google.android.gms.** { *; }
 
+# Ignore warnings for optional ML Kit language-specific text recognizers
+# These are optional dependencies that may not be included
+-dontwarn com.google.mlkit.vision.text.chinese.**
+-dontwarn com.google.mlkit.vision.text.devanagari.**
+-dontwarn com.google.mlkit.vision.text.japanese.**
+-dontwarn com.google.mlkit.vision.text.korean.**
+
 # Keep Syncfusion classes
 -keep class com.syncfusion.** { *; }
 

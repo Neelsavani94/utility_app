@@ -3,6 +3,7 @@ import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
 import '../scan_pdf/scan_pdf_bottom_sheet.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 
 class ToolsScreen extends StatelessWidget {
@@ -113,7 +114,11 @@ class ToolsScreen extends StatelessWidget {
       },
       child: GestureDetector(
         onTap: () {
-          if (label == 'Extract Texts') {
+          if (label == 'Merge PDF') {
+            _openPhotoEditor(context, colorScheme);
+          } else if (label == 'Split PDF') {
+            NavigationService.toSplitPDF();
+          } else if (label == 'Extract Texts') {
             NavigationService.toExtractText();
           } else if (label == 'QR Reader') {
             NavigationService.toQRReader();
@@ -121,6 +126,14 @@ class ToolsScreen extends StatelessWidget {
             NavigationService.toQRGenerator();
           } else if (label == 'Scan PDF') {
             _showScanPDFOptions(context, colorScheme, isDark);
+          } else if (label == 'eSign') {
+            NavigationService.toESignList();
+          } else if (label == 'Image to PDF') {
+            NavigationService.toImageToPDF();
+          } else if (label == 'Compress') {
+            NavigationService.toCompress();
+          } else if (label == 'Watermark') {
+            NavigationService.toWatermark();
           }
           // Handle other tool taps
         },
@@ -270,5 +283,63 @@ class ToolsScreen extends StatelessWidget {
         },
       ),
     );
+  }
+
+  Future<void> _openPhotoEditor(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'heic', 'webp'],
+      );
+
+      if (result == null || result.files.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('No images selected'),
+            backgroundColor: colorScheme.surfaceVariant,
+          ),
+        );
+        return;
+      }
+
+      final files = result.files
+          .where((file) => file.path != null)
+          .map((file) => File(file.path!))
+          .toList();
+
+      if (files.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Selected files could not be read'),
+            backgroundColor: colorScheme.surfaceVariant,
+          ),
+        );
+        return;
+      }
+
+      if (files.length < 2) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please select at least 2 images to merge PDF'),
+            backgroundColor: colorScheme.error,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+
+      NavigationService.toPhotoEditor(imageFiles: files);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unable to open gallery: $e'),
+          backgroundColor: colorScheme.error,
+        ),
+      );
+    }
   }
 }

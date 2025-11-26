@@ -21,6 +21,15 @@ import 'Screens/qr_generator/qr_generator_screen.dart';
 import 'Screens/scan_pdf/scan_pdf_filter_screen.dart';
 import 'Screens/scan_pdf/scan_pdf_progress_screen.dart';
 import 'Screens/scan_pdf/scan_pdf_viewer_screen.dart';
+import 'Screens/photo_editor/photo_editor_screen.dart';
+import 'Screens/esign/sign_list_screen.dart';
+import 'Screens/esign/sign_create_screen.dart';
+import 'modules/split_pdf/split_pdf_screen.dart';
+import 'modules/split_pdf/split_pdf_images_list_screen.dart';
+import 'modules/split_pdf/models/pdf_page_image.dart';
+import 'modules/image_to_pdf/image_to_pdf_screen.dart';
+import 'modules/compress/compress_screen.dart';
+import 'modules/watermark/watermark_screen.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'Theme/theme.dart';
@@ -89,6 +98,15 @@ class MyApp extends StatelessWidget {
               page: () => const QRGeneratorScreen(),
             ),
             GetPage(
+              name: AppRoutes.photoEditor,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                final rawList = (arguments?['imageFiles'] as List?) ?? [];
+                final files = rawList.map((e) => e as File).toList();
+                return PhotoEditorScreen(imageFiles: files);
+              },
+            ),
+            GetPage(
               name: AppRoutes.scanPDFFilter,
               page: () {
                 final arguments = Get.arguments as Map<String, dynamic>?;
@@ -126,6 +144,39 @@ class MyApp extends StatelessWidget {
                   pdfPath: arguments!['pdfPath'] as String,
                 );
               },
+            ),
+            GetPage(
+              name: AppRoutes.splitPDF,
+              page: () => const SplitPdfScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.splitPDFImagesList,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                final rawList = (arguments?['pageImages'] as List?) ?? [];
+                final pageImages = rawList.map((e) => e as PdfPageImage).toList();
+                return SplitPdfImagesListScreen(pageImages: pageImages);
+              },
+            ),
+            GetPage(
+              name: AppRoutes.imageToPDF,
+              page: () => const ImageToPdfScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.compress,
+              page: () => const CompressScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.watermark,
+              page: () => const WatermarkScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.esignList,
+              page: () => const SignListScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.esignCreate,
+              page: () => const SignCreateScreen(),
             ),
           ],
           unknownRoute: GetPage(

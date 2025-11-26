@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:get_storage/get_storage.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'dart:ui' as ui;
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Routes/app_routes.dart';
 import '../../Models/signature_model.dart';
-import 'dart:io';
 
 class SignListScreen extends StatefulWidget {
   const SignListScreen({super.key});
@@ -20,6 +22,16 @@ class _SignListScreenState extends State<SignListScreen> {
   @override
   void initState() {
     super.initState();
+    _loadSignatures();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+  }
+
+  // Reload when screen becomes visible again
+  void _reloadOnResume() {
     _loadSignatures();
   }
 
@@ -135,8 +147,12 @@ class _SignListScreenState extends State<SignListScreen> {
               },
             ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          NavigationService.navigateTo(AppRoutes.esignCreate);
+        onPressed: () async {
+          await NavigationService.navigateTo(AppRoutes.esignCreate);
+          // Reload signatures when returning from create screen
+          if (mounted) {
+            _reloadOnResume();
+          }
         },
         backgroundColor: colorScheme.primary,
         child: const Icon(Icons.add_rounded, color: Colors.white),
@@ -265,7 +281,7 @@ class _SignListScreenState extends State<SignListScreen> {
                       color: colorScheme.onSurface,
                     ),
                     onPressed: () {
-                      // Handle download
+                      _downloadSignature(signature);
                     },
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -319,6 +335,93 @@ class _SignListScreenState extends State<SignListScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _downloadSignature(SignatureModel signature) async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final downloadsDir = Directory('${directory.path}/Download/Scanify AI/ESign');
+      if (!await downloadsDir.exists()) {
+        await downloadsDir.create(recursive: true);
+      }
+
+      String? imagePath;
+      
+      if (signature.isTextSignature) {
+        // Create image from text signature
+        imagePath = await _createTextSignatureImage(signature, downloadsDir.path);
+      } else if (signature.imagePath != null && File(signature.imagePath!).existsSync()) {
+        // Copy existing image
+        final sourceFile = File(signature.imagePath!);
+        final fileName = '${signature.name.replaceAll(' ', '_')}_${DateTime.now().millisecondsSinceEpoch}.png';
+        final destFile = File('${downloadsDir.path}/$fileName');
+        await sourceFile.copy(destFile.path);
+        imagePath = destFile.path;
+      }
+
+      if (imagePath != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Signature saved to Downloads/Scanify AI/ESign'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error downloading signature: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<String> _createTextSignatureImage(SignatureModel signature, String dirPath) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    final textSpan = TextSpan(
+      text: signature.textContent ?? 'Signature',
+      style: TextStyle(
+        fontSize: 48,
+        fontWeight: FontWeight.w600,
+        color: Theme.of(context).colorScheme.onSurface,
+        fontStyle: FontStyle.italic,
+      ),
+    );
+
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+
+    // Draw on canvas with padding
+    const padding = 40.0;
+    final width = textPainter.width + (padding * 2);
+    final height = textPainter.height + (padding * 2);
+    
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, width, height),
+      Paint()..color = Colors.white,
+    );
+    
+    textPainter.paint(canvas, Offset(padding, padding));
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(width.toInt(), height.toInt());
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = byteData!.buffer.asUint8List();
+
+    final fileName = '${signature.name.replaceAll(' ', '_')}_${DateTime.now().millisecondsSinceEpoch}.png';
+    final file = File('$dirPath/$fileName');
+    await file.writeAsBytes(bytes);
+    
+    return file.path;
   }
 
   String _formatDate(DateTime date) {

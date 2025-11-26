@@ -75,7 +75,7 @@ class AppConstants {
     {'icon': Icons.qr_code_scanner_rounded, 'label': 'QR Scan'},
     {'icon': Icons.camera_alt_rounded, 'label': 'Camera'},
     {'icon': Icons.document_scanner_rounded, 'label': 'OCR Scan'},
-    {'icon': Icons.download_rounded, 'label': 'Import'},
+    {'icon': Icons.settings, 'label': 'Setting'},
   ];
 
   // All Tools List for Tools Screen
@@ -129,11 +129,6 @@ class AppConstants {
       'label': 'Extract Texts',
       'icon': Icons.text_fields_rounded,
       'color': Color(0xFF03A5C4), // Light Blue
-    },
-    {
-      'label': 'Import Files',
-      'icon': Icons.upload_file_rounded,
-      'color': Color(0xFFE91E63), // Pink
     },
   ];
 }

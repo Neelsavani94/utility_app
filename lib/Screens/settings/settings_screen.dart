@@ -15,39 +15,6 @@ class SettingsScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: colorScheme.background,
-      appBar: AppBar(
-        backgroundColor: colorScheme.background,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        leading: Container(
-          margin: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: isDark
-                ? colorScheme.surface.withOpacity(0.2)
-                : colorScheme.surface.withOpacity(0.6),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: IconButton(
-            icon: Icon(
-              Icons.arrow_back_rounded,
-              color: colorScheme.onSurface,
-              size: 20,
-            ),
-            onPressed: () => NavigationService.goBack(),
-            padding: EdgeInsets.zero,
-          ),
-        ),
-        title: Text(
-          'Settings',
-          style: TextStyle(
-            color: colorScheme.onBackground,
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.5,
-          ),
-        ),
-        centerTitle: false,
-      ),
       body: SingleChildScrollView(
         child: Column(
           children: [

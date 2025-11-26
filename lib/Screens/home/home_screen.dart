@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../Constants/app_constants.dart';
@@ -5,6 +8,7 @@ import '../../Providers/home_provider.dart';
 import '../../Components/empty_state.dart';
 import '../../Components/bottom_navigation_bar_custom.dart';
 import '../../Routes/navigation_service.dart';
+import '../settings/settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -51,82 +55,133 @@ class _HomeScreenState extends State<HomeScreen>
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      backgroundColor: colorScheme.background,
-      appBar: _buildAppBar(context, colorScheme, isDark),
-      body: Consumer<HomeProvider>(
-        builder: (context, provider, child) {
-          return SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Content Section
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppConstants.spacingM,
-                    AppConstants.spacingM,
-                    AppConstants.spacingM,
-                    100,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Quick Tools Grid
-                      FadeTransition(
-                        opacity: _fadeAnimation,
-                        child: _buildToolsGrid(context, provider),
-                      ),
-                      const SizedBox(height: AppConstants.spacingXS),
-                      _buildSearchBar(context, colorScheme, isDark, provider),
-                      // Category Filter Row
-                      FadeTransition(
-                        opacity: _fadeAnimation,
-                        child: _buildCategoryFilter(
-                          context,
-                          provider,
-                          colorScheme,
-                          isDark,
+    return Consumer<HomeProvider>(
+      builder: (context, provider, child) {
+        return Scaffold(
+          resizeToAvoidBottomInset: false,
+          backgroundColor: colorScheme.background,
+          appBar: _buildAppBar(
+            context,
+            colorScheme,
+            isDark,
+            provider.selectedBottomNavIndex == 4
+                ? Text(
+                    'Setting',
+                    style: TextStyle(
+                      color: colorScheme.secondary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.5,
+                    ),
+                  )
+                : RichText(
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'Scanify',
+                          style: TextStyle(
+                            color: colorScheme.secondary,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5,
+                          ),
                         ),
-                      ),
-
-                      const SizedBox(height: AppConstants.spacingM),
-
-                      // Documents Grid or Empty State
-                      provider.filteredDocuments.isEmpty
-                          ? SizedBox(
-                              height: MediaQuery.of(context).size.height * 0.3,
-                              child: const EmptyState(
-                                title: 'Start Scanning!',
-                                subtitle: 'We don\'t see any files',
-                                icon: Icons.document_scanner_rounded,
-                              ),
-                            )
-                          : _buildDocumentsGrid(context, provider),
-                    ],
+                        TextSpan(
+                          text: 'AI',
+                          style: TextStyle(
+                            color: colorScheme.onBackground,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+          ),
+          body: Builder(
+            builder: (context) {
+              // Show SettingsScreen when settings icon (index 4) is selected
+              if (provider.selectedBottomNavIndex == 4) {
+                return const SettingsScreen();
+              }
+
+              // Default home content
+              return SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Content Section
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppConstants.spacingM,
+                        AppConstants.spacingM,
+                        AppConstants.spacingM,
+                        100,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Quick Tools Grid
+                          FadeTransition(
+                            opacity: _fadeAnimation,
+                            child: _buildToolsGrid(context, provider),
+                          ),
+                          const SizedBox(height: AppConstants.spacingXS),
+                          _buildSearchBar(
+                            context,
+                            colorScheme,
+                            isDark,
+                            provider,
+                          ),
+                          // Category Filter Row
+                          FadeTransition(
+                            opacity: _fadeAnimation,
+                            child: _buildCategoryFilter(
+                              context,
+                              provider,
+                              colorScheme,
+                              isDark,
+                            ),
+                          ),
+
+                          const SizedBox(height: AppConstants.spacingM),
+
+                          // Documents Grid or Empty State
+                          provider.filteredDocuments.isEmpty
+                              ? SizedBox(
+                                  height:
+                                      MediaQuery.of(context).size.height * 0.3,
+                                  child: const EmptyState(
+                                    title: 'Start Scanning!',
+                                    subtitle: 'We don\'t see any files',
+                                    icon: Icons.document_scanner_rounded,
+                                  ),
+                                )
+                              : _buildDocumentsGrid(context, provider),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        },
-      ),
-      floatingActionButton: _buildFloatingActionButton(
-        context,
-        colorScheme,
-        isDark,
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: Consumer<HomeProvider>(
-        builder: (context, provider, child) {
-          return BottomNavigationBarCustom(
+              );
+            },
+          ),
+          floatingActionButton: _buildFloatingActionButton(
+            context,
+            colorScheme,
+            isDark,
+          ),
+          floatingActionButtonLocation:
+              FloatingActionButtonLocation.centerDocked,
+          bottomNavigationBar: BottomNavigationBarCustom(
             selectedIndex: provider.selectedBottomNavIndex,
             onItemSelected: (index) {
               provider.setSelectedBottomNavIndex(index);
             },
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -134,6 +189,7 @@ class _HomeScreenState extends State<HomeScreen>
     BuildContext context,
     ColorScheme colorScheme,
     bool isDark,
+    Widget title,
   ) {
     return AppBar(
       backgroundColor: isDark
@@ -185,30 +241,7 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
             const SizedBox(width: AppConstants.spacingS),
-            RichText(
-              text: TextSpan(
-                children: [
-                  TextSpan(
-                    text: 'Scanify',
-                    style: TextStyle(
-                      color: colorScheme.secondary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  TextSpan(
-                    text: 'AI',
-                    style: TextStyle(
-                      color: colorScheme.onBackground,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            title,
           ],
         ),
       ),
@@ -230,16 +263,6 @@ class _HomeScreenState extends State<HomeScreen>
           colorScheme,
           isDark,
         ),
-        _buildHeaderAction(
-          context,
-          Icons.settings_rounded,
-          () {
-            NavigationService.toSettings();
-          },
-          colorScheme,
-          isDark,
-        ),
-        const SizedBox(width: AppConstants.spacingM),
       ],
     );
   }
@@ -450,6 +473,12 @@ class _HomeScreenState extends State<HomeScreen>
             if (index == AppConstants.toolLabels.length - 1) {
               // Navigate to Tools Screen
               NavigationService.toTools();
+            } else if (index == 0) {
+              // Merge PDF tool
+              _openPhotoEditor(context, Theme.of(context).colorScheme);
+            } else if (index == 1) {
+              // Split PDF tool
+              NavigationService.toSplitPDF();
             } else if (index == 2) {
               // eSign tool
               NavigationService.toESignList();
@@ -460,6 +489,64 @@ class _HomeScreenState extends State<HomeScreen>
         );
       },
     );
+  }
+
+  Future<void> _openPhotoEditor(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'heic', 'webp'],
+      );
+
+      if (result == null || result.files.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('No images selected'),
+            backgroundColor: colorScheme.surfaceVariant,
+          ),
+        );
+        return;
+      }
+
+      final files = result.files
+          .where((file) => file.path != null)
+          .map((file) => File(file.path!))
+          .toList();
+
+      if (files.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Selected files could not be read'),
+            backgroundColor: colorScheme.surfaceVariant,
+          ),
+        );
+        return;
+      }
+
+      if (files.length < 2) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please select at least 2 images to merge PDF'),
+            backgroundColor: colorScheme.error,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+
+      NavigationService.toPhotoEditor(imageFiles: files);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unable to open gallery: $e'),
+          backgroundColor: colorScheme.error,
+        ),
+      );
+    }
   }
 
   Widget _buildToolGridItem(

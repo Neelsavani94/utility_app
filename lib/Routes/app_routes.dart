@@ -13,10 +13,16 @@ class AppRoutes {
   static const String extractText = '/extract-text';
   static const String qrReader = '/qr-reader';
   static const String qrGenerator = '/qr-generator';
+  static const String photoEditor = '/photo-editor';
   static const String scanPDF = '/scan-pdf';
   static const String scanPDFFilter = '/scan-pdf-filter';
   static const String scanPDFProgress = '/scan-pdf-progress';
   static const String scanPDFViewer = '/scan-pdf-viewer';
+  static const String splitPDF = '/split-pdf';
+  static const String splitPDFImagesList = '/split-pdf-images-list';
+  static const String imageToPDF = '/image-to-pdf';
+  static const String compress = '/compress';
+  static const String watermark = '/watermark';
   
   // Prevent instantiation
   AppRoutes._();

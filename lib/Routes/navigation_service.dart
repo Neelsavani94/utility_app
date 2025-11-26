@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'app_routes.dart';
@@ -95,6 +96,13 @@ class NavigationService {
     return navigateTo(AppRoutes.qrGenerator);
   }
 
+  static Future<dynamic>? toPhotoEditor({required List<File> imageFiles}) {
+    return navigateTo(
+      AppRoutes.photoEditor,
+      arguments: {'imageFiles': imageFiles},
+    );
+  }
+
   static Future<dynamic>? toScanPDF() {
     return navigateTo(AppRoutes.scanPDF);
   }
@@ -126,6 +134,29 @@ class NavigationService {
       AppRoutes.scanPDFViewer,
       arguments: {'pdfPath': pdfPath},
     );
+  }
+
+  static Future<dynamic>? toSplitPDF() {
+    return navigateTo(AppRoutes.splitPDF);
+  }
+
+  static Future<dynamic>? toSplitPdfImagesList({required List<dynamic> pageImages}) {
+    return navigateTo(
+      AppRoutes.splitPDFImagesList,
+      arguments: {'pageImages': pageImages},
+    );
+  }
+
+  static Future<dynamic>? toImageToPDF() {
+    return navigateTo(AppRoutes.imageToPDF);
+  }
+
+  static Future<dynamic>? toCompress() {
+    return navigateTo(AppRoutes.compress);
+  }
+
+  static Future<dynamic>? toWatermark() {
+    return navigateTo(AppRoutes.watermark);
   }
 }
 
