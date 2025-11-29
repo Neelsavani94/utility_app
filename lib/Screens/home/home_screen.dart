@@ -3,12 +3,22 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:flutter/services.dart';
 import '../../Constants/app_constants.dart';
 import '../../Providers/home_provider.dart';
 import '../../Components/empty_state.dart';
 import '../../Components/bottom_navigation_bar_custom.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/database_helper.dart';
+import '../../Models/tag_model.dart';
+import '../../Models/document_model.dart';
 import '../settings/settings_screen.dart';
+import '../scanner/scanner_mode_bottom_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,6 +33,9 @@ class _HomeScreenState extends State<HomeScreen>
   final ScrollController _scrollController = ScrollController();
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
+  final DatabaseHelper _db = DatabaseHelper.instance;
+  List<Tag> _tags = [];
+  bool _isLoadingTags = true;
 
   @override
   void initState() {
@@ -39,7 +52,26 @@ class _HomeScreenState extends State<HomeScreen>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeProvider>().loadDocuments();
+      _loadTags();
     });
+  }
+
+  Future<void> _loadTags() async {
+    try {
+      final tags = await _db.getAllTags();
+      if (mounted) {
+        setState(() {
+          _tags = tags;
+          _isLoadingTags = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingTags = false;
+        });
+      }
+    }
   }
 
   @override
@@ -64,6 +96,7 @@ class _HomeScreenState extends State<HomeScreen>
             context,
             colorScheme,
             isDark,
+            provider,
             provider.selectedBottomNavIndex == 4
                 ? Text(
                     'Setting',
@@ -148,7 +181,19 @@ class _HomeScreenState extends State<HomeScreen>
                           const SizedBox(height: AppConstants.spacingM),
 
                           // Documents Grid or Empty State
-                          provider.filteredDocuments.isEmpty
+                          provider.isLoading
+                              ? SizedBox(
+                                  height:
+                                      MediaQuery.of(context).size.height * 0.3,
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        colorScheme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : provider.filteredDocuments.isEmpty
                               ? SizedBox(
                                   height:
                                       MediaQuery.of(context).size.height * 0.3,
@@ -177,7 +222,16 @@ class _HomeScreenState extends State<HomeScreen>
           bottomNavigationBar: BottomNavigationBarCustom(
             selectedIndex: provider.selectedBottomNavIndex,
             onItemSelected: (index) {
-              provider.setSelectedBottomNavIndex(index);
+              // Handle QR Scan navigation (index 1)
+              if (index == 1) {
+                NavigationService.toQRReader();
+              } else if (index == 3) {
+                // Handle OCR Scan (index 3) - navigate to ExtractTextScreen and auto-trigger image picker
+                NavigationService.toExtractText(autoPickImage: true);
+              } else {
+                // For other items, update the selected index
+                provider.setSelectedBottomNavIndex(index);
+              }
             },
           ),
         );
@@ -189,6 +243,7 @@ class _HomeScreenState extends State<HomeScreen>
     BuildContext context,
     ColorScheme colorScheme,
     bool isDark,
+    HomeProvider provider,
     Widget title,
   ) {
     return AppBar(
@@ -250,15 +305,17 @@ class _HomeScreenState extends State<HomeScreen>
         _buildHeaderAction(
           context,
           Icons.bookmark_border_rounded,
-          () {},
+          () {
+            NavigationService.toFavorites();
+          },
           colorScheme,
           isDark,
         ),
         _buildHeaderAction(
           context,
           Icons.refresh_rounded,
-          () {
-            context.read<HomeProvider>().loadDocuments();
+          () async {
+            await context.read<HomeProvider>().loadDocuments();
           },
           colorScheme,
           isDark,
@@ -607,6 +664,29 @@ class _HomeScreenState extends State<HomeScreen>
     ColorScheme colorScheme,
     bool isDark,
   ) {
+    // Combine "All Docs" with tags from database
+    final List<Map<String, dynamic>> categories = [
+      ..._tags.map(
+        (tag) => {'title': tag.title, 'id': tag.id, 'isDefault': tag.isDefault},
+      ),
+    ];
+
+    if (_isLoadingTags) {
+      return SizedBox(
+        height: 35,
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -614,16 +694,17 @@ class _HomeScreenState extends State<HomeScreen>
           height: 35,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            itemCount: AppConstants.documentCategories.length,
+            itemCount: categories.length,
             separatorBuilder: (context, index) =>
                 const SizedBox(width: AppConstants.spacingS),
             itemBuilder: (context, index) {
-              final category = AppConstants.documentCategories[index];
-              final isSelected = provider.selectedCategory == category;
+              final category = categories[index];
+              final categoryTitle = category['title'] as String;
+              final isSelected = provider.selectedCategory == categoryTitle;
 
               return GestureDetector(
                 onTap: () {
-                  provider.setSelectedCategory(category);
+                  provider.setSelectedCategory(categoryTitle);
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
@@ -653,17 +734,34 @@ class _HomeScreenState extends State<HomeScreen>
                           ]
                         : null,
                   ),
-                  child: Text(
-                    category,
-                    style: TextStyle(
-                      color: isSelected
-                          ? Colors.white
-                          : colorScheme.onSurface.withOpacity(0.8),
-                      fontSize: 13,
-                      fontWeight: isSelected
-                          ? FontWeight.w600
-                          : FontWeight.w500,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        categoryTitle,
+                        style: TextStyle(
+                          color: isSelected
+                              ? Colors.white
+                              : colorScheme.onSurface.withOpacity(0.8),
+                          fontSize: 13,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                      ),
+                      if (category['isDefault'] == true &&
+                          categoryTitle != 'All Docs')
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: Icon(
+                            Icons.lock_rounded,
+                            size: 10,
+                            color: isSelected
+                                ? Colors.white.withOpacity(0.8)
+                                : colorScheme.primary.withOpacity(0.6),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               );
@@ -698,85 +796,90 @@ class _HomeScreenState extends State<HomeScreen>
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return GestureDetector(
-      onTap: () {
-        // Navigate to document detail
-      },
+      onTap: () => _handleDocumentTap(context, document),
       child: Container(
-        padding: const EdgeInsets.all(AppConstants.spacingS),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: colorScheme.surface.withOpacity(0.6),
-          borderRadius: BorderRadius.circular(12),
+          color: isDark ? colorScheme.surface.withOpacity(0.6) : Colors.white,
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: colorScheme.outline.withOpacity(0.08),
+            color: isDark
+                ? colorScheme.outline.withOpacity(0.12)
+                : colorScheme.outline.withOpacity(0.08),
             width: 1,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: isDark
+                  ? Colors.black.withOpacity(0.15)
+                  : Colors.black.withOpacity(0.03),
+              blurRadius: 6,
+              offset: const Offset(0, 1),
+            ),
+          ],
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Compact Icon
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: colorScheme.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                Icons.description_rounded,
-                color: colorScheme.primary,
-                size: 30,
-              ),
-            ),
-            const SizedBox(width: AppConstants.spacingM),
-            // Content
+            // Thumbnail or Icon with subtle gradient
+            _buildDocumentThumbnail(document, colorScheme, 52),
+            const SizedBox(width: 14),
+            // Content - Compact Vertical
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Title
                   Text(
                     document.name,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    style: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontSize: 15,
                       fontWeight: FontWeight.w600,
-                      fontSize: 14,
+                      height: 1.3,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                    child: Text(
+                      document.category,
+                      style: TextStyle(
+                        color: colorScheme.primary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  // Time and Category in one line
                   Row(
                     children: [
-                      Flexible(
-                        child: Text(
-                          document.formattedDate,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: colorScheme.onSurface.withOpacity(0.5),
-                                fontSize: 11,
-                              ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
+                      Icon(
+                        Icons.access_time_rounded,
+                        size: 12,
+                        color: colorScheme.onSurface.withOpacity(0.45),
                       ),
-                      const SizedBox(width: AppConstants.spacingS),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primary.withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          document.category,
-                          style: TextStyle(
-                            color: colorScheme.primary,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
+                      const SizedBox(width: 4),
+                      Text(
+                        document.formattedDate,
+                        style: TextStyle(
+                          color: colorScheme.onSurface.withOpacity(0.55),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w400,
                         ),
                       ),
                     ],
@@ -784,35 +887,255 @@ class _HomeScreenState extends State<HomeScreen>
                 ],
               ),
             ),
-            // Action Icons
-            IconButton(
-              icon: Icon(Icons.share_rounded, size: 20),
-              onPressed: () {
-                // Handle share
-              },
-              color: colorScheme.onSurface.withOpacity(0.5),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-            IconButton(
-              icon: Icon(Icons.more_vert_rounded, size: 20),
-              onPressed: () {
-                _showDocumentOptionsBottomSheet(
-                  context,
-                  document,
-                  colorScheme,
-                  isDark,
-                  provider,
-                );
-              },
-              color: colorScheme.onSurface.withOpacity(0.5),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            const SizedBox(width: 10),
+            // Actions - Compact
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Favorite
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () async {
+                      await provider.toggleFavorite(document.id);
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: document.isFavorite
+                            ? Colors.amber.withOpacity(0.12)
+                            : colorScheme.surface.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        document.isFavorite
+                            ? Icons.bookmark_rounded
+                            : Icons.bookmark_outline_rounded,
+                        size: 18,
+                        color: document.isFavorite
+                            ? Colors.amber.shade700
+                            : colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                    ),
+                  ),
+                ),
+                // Share
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => _handleShareDocument(context, document),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: colorScheme.surface.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.share_rounded,
+                        size: 18,
+                        color: colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                    ),
+                  ),
+                ),
+                // More
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () {
+                      _showDocumentOptionsBottomSheet(
+                        context,
+                        document,
+                        colorScheme,
+                        isDark,
+                        provider,
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: colorScheme.surface.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.more_vert_rounded,
+                        size: 18,
+                        color: colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildDocumentThumbnail(dynamic document, ColorScheme colorScheme, double size) {
+    final thumbnailPath = document.thumbnailPath;
+    
+    // If thumbnail exists and is not empty, show thumbnail
+    if (thumbnailPath != null && thumbnailPath.isNotEmpty) {
+      final thumbnailFile = File(thumbnailPath);
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: colorScheme.outline.withOpacity(0.1),
+            width: 1,
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.file(
+            thumbnailFile,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              // Fallback to icon if thumbnail fails to load
+              return Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      colorScheme.primary,
+                      colorScheme.primary.withOpacity(0.8),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.description_rounded,
+                  color: Colors.white,
+                  size: size * 0.5,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    }
+    
+    // Default icon with gradient
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            colorScheme.primary,
+            colorScheme.primary.withOpacity(0.8),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(
+        Icons.description_rounded,
+        color: Colors.white,
+        size: size * 0.5,
+      ),
+    );
+  }
+
+  void _handleDocumentTap(BuildContext context, dynamic document) {
+    final filePath = document.imagePath ?? document.thumbnailPath;
+    if (filePath == null || filePath.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('File path not available'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return;
+    }
+
+    final category = document.category?.toLowerCase() ?? '';
+    final isPDF = category == 'pdf' || 
+                  filePath.toLowerCase().endsWith('.pdf') ||
+                  document.name.toLowerCase().endsWith('.pdf');
+
+    if (isPDF) {
+      // Navigate to PDF viewer
+      NavigationService.toScanPDFViewer(pdfPath: filePath);
+    } else {
+      // Navigate to image viewer
+      NavigationService.toImageViewer(
+        imagePath: filePath,
+        imageName: document.name,
+      );
+    }
+  }
+
+  Future<void> _handleShareDocument(BuildContext context, dynamic document) async {
+    // Check if it's a folder
+    final category = document.category?.toLowerCase() ?? '';
+    if (category == 'folder') {
+      Fluttertoast.showToast(
+        msg: 'Cannot share folder',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+      return;
+    }
+
+    final filePath = document.imagePath ?? document.thumbnailPath;
+    if (filePath == null || filePath.isEmpty) {
+      Fluttertoast.showToast(
+        msg: 'File path not available',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+      return;
+    }
+
+    final file = File(filePath);
+    if (!await file.exists()) {
+      Fluttertoast.showToast(
+        msg: 'File not found',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+      return;
+    }
+
+    try {
+      final isPDF = category == 'pdf' || 
+                    filePath.toLowerCase().endsWith('.pdf') ||
+                    document.name.toLowerCase().endsWith('.pdf');
+
+      await Share.shareXFiles(
+        [XFile(filePath)],
+        text: isPDF ? 'PDF Document' : 'Image',
+      );
+    } catch (e) {
+      if (context.mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error sharing file: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
   }
 
   Widget _buildFloatingActionButton(
@@ -843,7 +1166,7 @@ class _HomeScreenState extends State<HomeScreen>
         color: Colors.transparent,
         child: InkWell(
           onTap: () {
-            // Handle camera tap
+            _showScannerModeBottomSheet(context);
           },
           borderRadius: BorderRadius.circular(32),
           child: const Icon(
@@ -962,22 +1285,74 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           ElevatedButton(
-            onPressed: () {
-              if (nameController.text.trim().isNotEmpty) {
-                // Handle folder creation
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Folder "${nameController.text.trim()}" created',
-                    ),
-                    backgroundColor: colorScheme.primary,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+            onPressed: () async {
+              final folderName = nameController.text.trim();
+              if (folderName.isEmpty) {
+                Fluttertoast.showToast(
+                  msg: 'Please enter a folder name',
+                  toastLength: Toast.LENGTH_SHORT,
+                  gravity: ToastGravity.BOTTOM,
+                  backgroundColor: Colors.orange,
+                  textColor: Colors.white,
                 );
+                return;
+              }
+
+              try {
+                // Check for duplicate folder names in Documents table
+                final allDocuments = await _db.getAllDocuments();
+                final existingFolder = allDocuments.firstWhere(
+                  (doc) =>
+                      doc.type.toLowerCase() == 'folder' &&
+                      doc.title.toLowerCase() == folderName.toLowerCase(),
+                  orElse: () => Document(title: '', type: '', imagePath: ''),
+                );
+
+                if (existingFolder.title.isNotEmpty) {
+                  Fluttertoast.showToast(
+                    msg: 'Folder "$folderName" already exists',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.orange,
+                    textColor: Colors.white,
+                  );
+                  return;
+                }
+
+                // Create folder as a document with type "Folder"
+                // Use a placeholder image path for folders
+                final folderDocument = Document(
+                  title: folderName,
+                  type: 'Folder',
+                  tagId: 1,
+                  imagePath: '',
+                  isFavourite: false,
+                );
+
+                await _db.insertDocument(folderDocument);
+                context.read<HomeProvider>().loadDocuments();
+
+                if (mounted) {
+                  Navigator.pop(context);
+
+                  Fluttertoast.showToast(
+                    msg: 'Folder "$folderName" created successfully',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.green,
+                    textColor: Colors.white,
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  Fluttertoast.showToast(
+                    msg: 'Error creating folder: $e',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.red,
+                    textColor: Colors.white,
+                  );
+                }
               }
             },
             style: ElevatedButton.styleFrom(
@@ -994,11 +1369,11 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  void _showCreateTagDialog(
+  Future<int?> _showCreateTagDialog(
     BuildContext context,
     ColorScheme colorScheme,
     bool isDark,
-  ) {
+  ) async {
     final nameController = TextEditingController();
 
     showDialog(
@@ -1044,22 +1419,64 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           ElevatedButton(
-            onPressed: () {
-              if (nameController.text.trim().isNotEmpty) {
-                // Handle tag creation
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Tag "${nameController.text.trim()}" created',
-                    ),
-                    backgroundColor: colorScheme.primary,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+            onPressed: () async {
+              final tagName = nameController.text.trim();
+              if (tagName.isEmpty) {
+                Fluttertoast.showToast(
+                  msg: 'Please enter a tag name',
+                  toastLength: Toast.LENGTH_SHORT,
+                  gravity: ToastGravity.BOTTOM,
+                  backgroundColor: Colors.orange,
+                  textColor: Colors.white,
                 );
+                return;
+              }
+
+              // Check for duplicate tag names
+              final existingTag = _tags.firstWhere(
+                (tag) => tag.title.toLowerCase() == tagName.toLowerCase(),
+                orElse: () => Tag(title: ''),
+              );
+
+              if (existingTag.title.isNotEmpty) {
+                Fluttertoast.showToast(
+                  msg: 'Tag "$tagName" already exists',
+                  toastLength: Toast.LENGTH_SHORT,
+                  gravity: ToastGravity.BOTTOM,
+                  backgroundColor: Colors.orange,
+                  textColor: Colors.white,
+                );
+                return;
+              }
+
+              try {
+                final tag = Tag(title: tagName);
+                final tagId = await _db.insertTag(tag);
+
+                if (mounted) {
+                  Navigator.pop(context, tagId);
+                  // Reload tags to show the new tag
+                  await _loadTags();
+
+                  Fluttertoast.showToast(
+                    msg: 'Tag "$tagName" created successfully',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.green,
+                    textColor: Colors.white,
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  Fluttertoast.showToast(
+                    msg: 'Error creating tag: $e',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.red,
+                    textColor: Colors.white,
+                  );
+                }
+                return null;
               }
             },
             style: ElevatedButton.styleFrom(
@@ -1074,6 +1491,7 @@ class _HomeScreenState extends State<HomeScreen>
         ],
       ),
     );
+    return null;
   }
 
   void _showSortByDialog(
@@ -1083,12 +1501,10 @@ class _HomeScreenState extends State<HomeScreen>
     HomeProvider provider,
   ) {
     final sortOptions = [
-      {'label': 'Name (A-Z)', 'value': 'name_asc'},
-      {'label': 'Name (Z-A)', 'value': 'name_desc'},
-      {'label': 'Date (Newest)', 'value': 'date_desc'},
-      {'label': 'Date (Oldest)', 'value': 'date_asc'},
-      {'label': 'Size (Largest)', 'value': 'size_desc'},
-      {'label': 'Size (Smallest)', 'value': 'size_asc'},
+      {'label': 'Name (A-Z)', 'value': 'name_asc', 'icon': Icons.sort_by_alpha_rounded},
+      {'label': 'Name (Z-A)', 'value': 'name_desc', 'icon': Icons.sort_by_alpha_rounded},
+      {'label': 'Date (Newest)', 'value': 'date_desc', 'icon': Icons.access_time_rounded},
+      {'label': 'Date (Oldest)', 'value': 'date_asc', 'icon': Icons.access_time_rounded},
     ];
 
     showDialog(
@@ -1109,28 +1525,37 @@ class _HomeScreenState extends State<HomeScreen>
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: sortOptions.map((option) {
+            final isSelected = provider.sortBy == option['value'];
             return ListTile(
               leading: Icon(
-                Icons.sort_rounded,
-                color: colorScheme.primary,
+                option['icon'] as IconData,
+                color: isSelected ? colorScheme.primary : colorScheme.onSurface.withOpacity(0.6),
                 size: 20,
               ),
               title: Text(
                 option['label'] as String,
-                style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
+                style: TextStyle(
+                  color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                  fontSize: 14,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                ),
               ),
+              trailing: isSelected
+                  ? Icon(
+                      Icons.check_rounded,
+                      color: colorScheme.primary,
+                      size: 20,
+                    )
+                  : null,
               onTap: () {
-                // Handle sort
+                provider.setSortBy(option['value'] as String);
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Sorted by ${option['label']}'),
-                    backgroundColor: colorScheme.primary,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+                Fluttertoast.showToast(
+                  msg: 'Sorted by ${option['label']}',
+                  toastLength: Toast.LENGTH_SHORT,
+                  gravity: ToastGravity.BOTTOM,
+                  backgroundColor: colorScheme.primary,
+                  textColor: Colors.white,
                 );
               },
             );
@@ -1487,42 +1912,474 @@ class _HomeScreenState extends State<HomeScreen>
   ) {
     switch (option) {
       case 'Move':
-        _showMoveCopyPage(context, document, colorScheme, provider, 'Move');
+        _handleMoveDocument(context, document, colorScheme, provider);
         break;
       case 'Save':
-        _showSaveDialog(context, document, colorScheme);
+        _handleSaveDocument(context, document, colorScheme);
         break;
       case 'Send Mail':
-        _showSendMailDialog(context, document, colorScheme);
+        _handleSendMailDocument(context, document, colorScheme);
         break;
       case 'OCR':
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('OCR "${document.name}"'),
-            backgroundColor: colorScheme.primary,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
+        _handleOCRDocument(context, document);
         break;
       case 'Lock':
-        _showLockFileDialog(context, document, colorScheme);
+        _handleLockDocument(context, document, colorScheme);
         break;
       case 'Copy':
-        _showMoveCopyPage(context, document, colorScheme, provider, 'Copy');
+        _handleCopyDocument(context, document, colorScheme, provider);
         break;
       case 'Rename':
-        _showRenameBottomSheet(context, document, colorScheme);
+        _handleRenameDocument(context, document, colorScheme);
         break;
       case 'Tags':
-        _showChangeTagBottomSheet(context, document, colorScheme, provider);
+        _handleChangeTagsDocument(context, document, colorScheme, provider);
         break;
       case 'Move to Trash':
-        _showMoveToTrashBottomSheet(context, document, colorScheme, provider);
+        _handleMoveToTrashDocument(context, document, colorScheme, provider);
         break;
     }
+  }
+
+  // Move Document Function
+  void _handleMoveDocument(
+    BuildContext context,
+    dynamic document,
+    ColorScheme colorScheme,
+    HomeProvider provider,
+  ) {
+    _showMoveCopyPage(context, document, colorScheme, provider, 'Move');
+  }
+
+  // Save Document Function
+  void _handleSaveDocument(
+    BuildContext context,
+    dynamic document,
+    ColorScheme colorScheme,
+  ) {
+    _showSaveDialog(context, document, colorScheme);
+  }
+
+  // Send Mail Document Function
+  Future<void> _handleSendMailDocument(
+    BuildContext context,
+    dynamic document,
+    ColorScheme colorScheme,
+  ) async {
+    final emailController = TextEditingController();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final result = await showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark
+                ? colorScheme.surface.withOpacity(0.98)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(AppConstants.spacingL),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.email_rounded,
+                          color: colorScheme.primary,
+                          size: 24,
+                        ),
+                        const SizedBox(width: AppConstants.spacingS),
+                        Text(
+                          'Send Mail',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => Navigator.pop(context),
+                          borderRadius: BorderRadius.circular(16),
+                          child: Icon(
+                            Icons.close_rounded,
+                            color: colorScheme.primary,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // Email Input
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(
+                    hintText: 'Enter E-mail Id',
+                    hintStyle: TextStyle(
+                      color: colorScheme.onSurface.withOpacity(0.4),
+                    ),
+                    filled: true,
+                    fillColor: isDark
+                        ? colorScheme.surface.withOpacity(0.3)
+                        : colorScheme.surface.withOpacity(0.5),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.primary,
+                        width: 2,
+                      ),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppConstants.spacingM,
+                      vertical: AppConstants.spacingM,
+                    ),
+                  ),
+                  style: TextStyle(color: colorScheme.onSurface),
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // OK Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      final email = emailController.text.trim();
+                      if (email.isNotEmpty) {
+                        Navigator.pop(context, email);
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      'OK',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (result != null && result is String) {
+      final filePath = document.imagePath ?? document.thumbnailPath;
+      
+      if (filePath == null || filePath.isEmpty) {
+        if (context.mounted) {
+          Fluttertoast.showToast(
+            msg: 'File path not available',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      final file = File(filePath);
+      if (!await file.exists()) {
+        if (context.mounted) {
+          Fluttertoast.showToast(
+            msg: 'File not found',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      try {
+        // Use Share to send file via email (supports attachments)
+        final isPDF = filePath.toLowerCase().endsWith('.pdf') ||
+                     document.name.toLowerCase().endsWith('.pdf') ||
+                     (document.category?.toLowerCase() ?? '') == 'pdf';
+        
+        await Share.shareXFiles(
+          [XFile(filePath)],
+          text: 'Please find the attached ${isPDF ? 'PDF' : 'image'}: ${document.name}',
+          subject: document.name,
+        );
+        
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Sharing "${document.name}" via email'),
+              backgroundColor: colorScheme.primary,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          Fluttertoast.showToast(
+            msg: 'Error sharing file: $e',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+      }
+    }
+  }
+
+  // OCR Document Function - Direct OCR Processing
+  Future<void> _handleOCRDocument(
+    BuildContext context,
+    dynamic document,
+  ) async {
+    final filePath = document.imagePath ?? document.thumbnailPath;
+    if (filePath == null || filePath.isEmpty) {
+      Fluttertoast.showToast(
+        msg: 'File path not available',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+      return;
+    }
+
+    final file = File(filePath);
+    if (!await file.exists()) {
+      Fluttertoast.showToast(
+        msg: 'File not found',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+      return;
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final isPDF = filePath.toLowerCase().endsWith('.pdf') ||
+                 document.name.toLowerCase().endsWith('.pdf') ||
+                 (document.category?.toLowerCase() ?? '') == 'pdf';
+
+    // Show processing indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: colorScheme.primary),
+              const SizedBox(height: 16),
+              Text(
+                'Processing OCR...',
+                style: TextStyle(color: colorScheme.onSurface),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      String extractedText = '';
+      
+      if (isPDF) {
+        // Process PDF
+        final bytes = await file.readAsBytes();
+        final pdfDocument = PdfDocument(inputBytes: bytes);
+        final pageCount = pdfDocument.pages.count;
+
+        for (int i = 0; i < pageCount; i++) {
+          try {
+            final textExtractor = PdfTextExtractor(pdfDocument);
+            final pageText = textExtractor.extractText(startPageIndex: i, endPageIndex: i);
+            if (pageText.isNotEmpty) {
+              extractedText += 'Page ${i + 1}:\n$pageText\n\n';
+            }
+          } catch (e) {
+            // Page might be scanned image, skip for now
+            print('Error extracting text from page ${i + 1}: $e');
+          }
+        }
+        pdfDocument.dispose();
+      } else {
+        // Process Image
+        final textRecognizer = TextRecognizer();
+        try {
+          final inputImage = InputImage.fromFilePath(filePath);
+          final recognizedText = await textRecognizer.processImage(inputImage);
+          extractedText = recognizedText.text;
+        } finally {
+          textRecognizer.close();
+        }
+      }
+
+      if (context.mounted) {
+        Navigator.pop(context); // Close loading dialog
+        
+        if (extractedText.isEmpty) {
+          Fluttertoast.showToast(
+            msg: 'No text found in document',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.orange,
+            textColor: Colors.white,
+          );
+          return;
+        }
+
+        // Show extracted text in a dialog
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text('Extracted Text from ${document.name}'),
+            content: SingleChildScrollView(
+              child: SelectableText(extractedText),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: extractedText));
+                  Fluttertoast.showToast(
+                    msg: 'Text copied to clipboard',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.green,
+                    textColor: Colors.white,
+                  );
+                },
+                child: const Text('Copy'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.pop(context); // Close loading dialog
+        Fluttertoast.showToast(
+          msg: 'Error processing OCR: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
+  }
+
+  // Lock Document Function
+  void _handleLockDocument(
+    BuildContext context,
+    dynamic document,
+    ColorScheme colorScheme,
+  ) {
+    _showLockFileDialog(context, document, colorScheme);
+  }
+
+  // Copy Document Function
+  void _handleCopyDocument(
+    BuildContext context,
+    dynamic document,
+    ColorScheme colorScheme,
+    HomeProvider provider,
+  ) {
+    _showMoveCopyPage(context, document, colorScheme, provider, 'Copy');
+  }
+
+  // Rename Document Function
+  void _handleRenameDocument(
+    BuildContext context,
+    dynamic document,
+    ColorScheme colorScheme,
+  ) {
+    _showRenameBottomSheet(context, document, colorScheme);
+  }
+
+  // Change Tags Document Function
+  void _handleChangeTagsDocument(
+    BuildContext context,
+    dynamic document,
+    ColorScheme colorScheme,
+    HomeProvider provider,
+  ) {
+    _showChangeTagBottomSheet(context, document, colorScheme, provider);
+  }
+
+  // Move to Trash Document Function
+  void _handleMoveToTrashDocument(
+    BuildContext context,
+    dynamic document,
+    ColorScheme colorScheme,
+    HomeProvider provider,
+  ) {
+    _showMoveToTrashBottomSheet(context, document, colorScheme, provider);
   }
 
   // Lock File Dialog
@@ -1748,172 +2605,6 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                 ],
               ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Send Mail Dialog
-  void _showSendMailDialog(
-    BuildContext context,
-    dynamic document,
-    ColorScheme colorScheme,
-  ) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final emailController = TextEditingController();
-
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withOpacity(0.5),
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(20),
-        child: Container(
-          decoration: BoxDecoration(
-            color: isDark
-                ? colorScheme.surface.withOpacity(0.98)
-                : Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(AppConstants.spacingL),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Header
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.email_rounded,
-                          color: colorScheme.primary,
-                          size: 24,
-                        ),
-                        const SizedBox(width: AppConstants.spacingS),
-                        Text(
-                          'Send Mail',
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: colorScheme.primary.withOpacity(0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: () => Navigator.pop(context),
-                          borderRadius: BorderRadius.circular(16),
-                          child: Icon(
-                            Icons.close_rounded,
-                            color: colorScheme.primary,
-                            size: 18,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppConstants.spacingXL),
-                // Email Input
-                TextField(
-                  controller: emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: InputDecoration(
-                    hintText: 'Enter E-mail Id',
-                    hintStyle: TextStyle(
-                      color: colorScheme.onSurface.withOpacity(0.4),
-                    ),
-                    filled: true,
-                    fillColor: isDark
-                        ? colorScheme.surface.withOpacity(0.3)
-                        : colorScheme.surface.withOpacity(0.5),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: colorScheme.outline.withOpacity(0.2),
-                      ),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: colorScheme.outline.withOpacity(0.2),
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: colorScheme.primary,
-                        width: 2,
-                      ),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: AppConstants.spacingM,
-                      vertical: AppConstants.spacingM,
-                    ),
-                  ),
-                  style: TextStyle(color: colorScheme.onSurface),
-                ),
-                const SizedBox(height: AppConstants.spacingXL),
-                // OK Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      if (emailController.text.trim().isNotEmpty) {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Sending "${document.name}" to ${emailController.text.trim()}',
-                            ),
-                            backgroundColor: colorScheme.primary,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                        );
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: colorScheme.primary,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: Text(
-                      'OK',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
             ),
           ),
         ),
@@ -2226,19 +2917,13 @@ class _HomeScreenState extends State<HomeScreen>
                     width: double.infinity,
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: () {
+                      onPressed: () async {
                         Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'Saved "${document.name}" as $selectedFormat',
-                            ),
-                            backgroundColor: colorScheme.primary,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
+                        await _performSaveDocument(
+                          context,
+                          document,
+                          selectedFormat,
+                          colorScheme,
                         );
                       },
                       style: ElevatedButton.styleFrom(
@@ -2265,6 +2950,139 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+  }
+
+  // Perform Save Document Function - Save to Gallery
+  Future<void> _performSaveDocument(
+    BuildContext context,
+    dynamic document,
+    String selectedFormat,
+    ColorScheme colorScheme,
+  ) async {
+    try {
+      final filePath = document.imagePath ?? document.thumbnailPath;
+      if (filePath == null || filePath.isEmpty) {
+        if (context.mounted) {
+          Fluttertoast.showToast(
+            msg: 'File path not available',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      final sourceFile = File(filePath);
+      if (!await sourceFile.exists()) {
+        if (context.mounted) {
+          Fluttertoast.showToast(
+            msg: 'File not found',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      final isPDF = filePath.toLowerCase().endsWith('.pdf') ||
+                   document.name.toLowerCase().endsWith('.pdf') ||
+                   (document.category?.toLowerCase() ?? '') == 'pdf';
+
+      if (isPDF) {
+        // For PDF, save to downloads directory
+        final directory = await getApplicationDocumentsDirectory();
+        final downloadsDir = Directory('${directory.path}/Download/Scanify AI');
+        if (!await downloadsDir.exists()) {
+          await downloadsDir.create(recursive: true);
+        }
+
+        final fileName = document.name;
+        final destFile = File('${downloadsDir.path}/$fileName');
+        await sourceFile.copy(destFile.path);
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Saved "${document.name}" to Downloads'),
+              backgroundColor: colorScheme.primary,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } else {
+        // For images, save to Pictures directory (accessible from gallery)
+        try {
+          Directory? picturesDir;
+          if (Platform.isAndroid) {
+            // Android: Use external storage Pictures directory
+            final externalDir = await getExternalStorageDirectory();
+            if (externalDir != null) {
+              picturesDir = Directory('${externalDir.path.split('/Android')[0]}/Pictures/Scanify AI');
+            }
+          } else if (Platform.isIOS) {
+            // iOS: Use application documents directory
+            final appDir = await getApplicationDocumentsDirectory();
+            picturesDir = Directory('${appDir.path}/Pictures/Scanify AI');
+          }
+
+          if (picturesDir == null) {
+            // Fallback to Downloads
+            final directory = await getApplicationDocumentsDirectory();
+            picturesDir = Directory('${directory.path}/Download/Scanify AI/Pictures');
+          }
+
+          if (!await picturesDir.exists()) {
+            await picturesDir.create(recursive: true);
+          }
+
+          final fileName = document.name;
+          final destFile = File('${picturesDir.path}/$fileName');
+          await sourceFile.copy(destFile.path);
+
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Saved "${document.name}" to Gallery'),
+                backgroundColor: colorScheme.primary,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        } catch (e) {
+          if (context.mounted) {
+            Fluttertoast.showToast(
+              msg: 'Error saving to gallery: $e',
+              toastLength: Toast.LENGTH_SHORT,
+              gravity: ToastGravity.BOTTOM,
+              backgroundColor: Colors.red,
+              textColor: Colors.white,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error saving file: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
   }
 
   // Move to Trash Bottom Sheet
@@ -2367,19 +3185,15 @@ class _HomeScreenState extends State<HomeScreen>
                     const SizedBox(width: AppConstants.spacingM),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '"${document.name}" moved to trash',
-                              ),
-                              backgroundColor: Colors.red,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
+                          await provider.moveToTrash(document.id);
+                          Fluttertoast.showToast(
+                            msg: '"${document.name}" moved to trash',
+                            toastLength: Toast.LENGTH_SHORT,
+                            gravity: ToastGravity.BOTTOM,
+                            backgroundColor: Colors.red,
+                            textColor: Colors.white,
                           );
                         },
                         style: ElevatedButton.styleFrom(
@@ -2420,6 +3234,7 @@ class _HomeScreenState extends State<HomeScreen>
   ) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     String? selectedTag = document.category;
+    int? selectedTagId;
 
     showModalBottomSheet(
       context: context,
@@ -2498,9 +3313,22 @@ class _HomeScreenState extends State<HomeScreen>
                   const SizedBox(height: AppConstants.spacingM),
                   // Create New Tag
                   GestureDetector(
-                    onTap: () {
-                      Navigator.pop(context);
-                      _showCreateTagDialog(context, colorScheme, isDark);
+                    onTap: () async {
+                      final result = await _showCreateTagDialog(context, colorScheme, isDark);
+                      if (result != null) {
+                        // Reload tags after creating new tag
+                        await _loadTags();
+                        setState(() {
+                          final newTag = _tags.firstWhere(
+                            (t) => t.id == result,
+                            orElse: () => Tag(title: ''),
+                          );
+                          if (newTag.title.isNotEmpty) {
+                            selectedTag = newTag.title;
+                            selectedTagId = newTag.id;
+                          }
+                        });
+                      }
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -2528,52 +3356,81 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                   const Divider(height: 1),
                   const SizedBox(height: AppConstants.spacingS),
-                  // Tag List
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: AppConstants.documentCategories.length,
-                    itemBuilder: (context, index) {
-                      final category = AppConstants.documentCategories[index];
-
-                      return RadioListTile<String>(
-                        title: Text(
-                          category,
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
+                  // Tag List from Database
+                  _tags.isEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.all(AppConstants.spacingM),
+                          child: Center(
+                            child: Text(
+                              'No tags available',
+                              style: TextStyle(
+                                color: colorScheme.onSurface.withOpacity(0.5),
+                                fontSize: 14,
+                              ),
+                            ),
                           ),
+                        )
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _tags.length,
+                          itemBuilder: (context, index) {
+                            final tag = _tags[index];
+
+                            return RadioListTile<String>(
+                              title: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      tag.title,
+                                      style: TextStyle(
+                                        color: colorScheme.onSurface,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  if (tag.isDefault)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 8),
+                                      child: Icon(
+                                        Icons.lock_rounded,
+                                        size: 14,
+                                        color: colorScheme.primary.withOpacity(
+                                          0.6,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              value: tag.title,
+                              groupValue: selectedTag,
+                              onChanged: (value) {
+                                setState(() {
+                                  selectedTag = value;
+                                  selectedTagId = tag.id;
+                                });
+                              },
+                              activeColor: colorScheme.primary,
+                            );
+                          },
                         ),
-                        value: category,
-                        groupValue: selectedTag,
-                        onChanged: (value) {
-                          setState(() {
-                            selectedTag = value;
-                          });
-                        },
-                        activeColor: colorScheme.primary,
-                      );
-                    },
-                  ),
                   const SizedBox(height: AppConstants.spacingM),
                   // Change Button
                   SizedBox(
                     width: double.infinity,
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: () {
-                        if (selectedTag != null) {
+                      onPressed: () async {
+                        if (selectedTag != null && selectedTagId != null) {
                           Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Tag changed to "$selectedTag"'),
-                              backgroundColor: colorScheme.primary,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
+                          await _updateDocumentTag(
+                            context,
+                            document,
+                            selectedTagId!,
+                            selectedTag!,
+                            colorScheme,
+                            provider,
                           );
                         }
                       },
@@ -2602,6 +3459,139 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+  }
+
+  // Update Document Tag in Database
+  Future<void> _updateDocumentTag(
+    BuildContext context,
+    dynamic document,
+    int tagId,
+    String tagTitle,
+    ColorScheme colorScheme,
+    HomeProvider provider,
+  ) async {
+    try {
+      final docId = int.tryParse(document.id.toString());
+      if (docId == null) {
+        Fluttertoast.showToast(
+          msg: 'Invalid document ID',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+        return;
+      }
+
+      // Get current document from database
+      final currentDoc = await _db.getDocumentById(docId);
+      if (currentDoc == null) {
+        Fluttertoast.showToast(
+          msg: 'Document not found',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+        return;
+      }
+
+      // Update document with new tag_id
+      final updatedDoc = currentDoc.copyWith(tagId: tagId);
+      await _db.updateDocument(updatedDoc);
+
+      // Reload documents in provider
+      await provider.loadDocuments();
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Tag changed to "$tagTitle"'),
+            backgroundColor: colorScheme.primary,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error updating tag: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
+  }
+
+  // Update Document Title in Database
+  Future<void> _updateDocumentTitle(
+    BuildContext context,
+    dynamic document,
+    String newTitle,
+    ColorScheme colorScheme,
+  ) async {
+    try {
+      final docId = int.tryParse(document.id.toString());
+      if (docId == null) {
+        Fluttertoast.showToast(
+          msg: 'Invalid document ID',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+        return;
+      }
+
+      // Get current document from database
+      final currentDoc = await _db.getDocumentById(docId);
+      if (currentDoc == null) {
+        Fluttertoast.showToast(
+          msg: 'Document not found',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+        return;
+      }
+
+      // Update document with new title
+      final updatedDoc = currentDoc.copyWith(title: newTitle);
+      await _db.updateDocument(updatedDoc);
+
+      // Reload documents in provider
+      final provider = Provider.of<HomeProvider>(context, listen: false);
+      await provider.loadDocuments();
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Renamed to "$newTitle"'),
+            backgroundColor: colorScheme.primary,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error updating title: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
   }
 
   // Rename Bottom Sheet
@@ -2752,20 +3742,15 @@ class _HomeScreenState extends State<HomeScreen>
                     Expanded(
                       flex: 2,
                       child: ElevatedButton(
-                        onPressed: () {
-                          if (nameController.text.trim().isNotEmpty) {
+                        onPressed: () async {
+                          final newName = nameController.text.trim();
+                          if (newName.isNotEmpty) {
                             Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Renamed to "${nameController.text.trim()}"',
-                                ),
-                                backgroundColor: colorScheme.primary,
-                                behavior: SnackBarBehavior.floating,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
+                            await _updateDocumentTitle(
+                              context,
+                              document,
+                              newName,
+                              colorScheme,
                             );
                           }
                         },
@@ -2810,4 +3795,23 @@ class _HomeScreenState extends State<HomeScreen>
       arguments: {'document': document, 'action': action},
     );
   }
+
+  // Scanner Mode Selection
+  void _showScannerModeBottomSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (bottomSheetContext) => ScannerModeBottomSheet(
+        onModeSelected: (mode) {
+          if (mode == ScannerMode.simple) {
+            NavigationService.toSimpleScannerType();
+          } else if (mode == ScannerMode.ai) {
+            NavigationService.toAIScannerCamera();
+          }
+        },
+      ),
+    );
+  }
+
 }

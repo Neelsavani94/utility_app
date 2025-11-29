@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/database_helper.dart';
+import '../../Models/tag_model.dart';
 
 class ManageTagsScreen extends StatefulWidget {
   const ManageTagsScreen({super.key});
@@ -10,23 +13,39 @@ class ManageTagsScreen extends StatefulWidget {
 }
 
 class _ManageTagsScreenState extends State<ManageTagsScreen> {
-  // Sample tags data - in real app, this would come from a provider or database
-  late List<Map<String, dynamic>> tags;
+  final DatabaseHelper _db = DatabaseHelper.instance;
+  List<Tag> _tags = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    // Initialize tags with default categories
-    tags = List.generate(
-      AppConstants.documentCategories.length,
-      (index) => {
-        'id': index,
-        'name': AppConstants.documentCategories[index],
-        'icon': AppConstants.categoryIcons[index],
-        'createdAt': DateTime.now().subtract(Duration(days: index)),
-        'color': _getTagColor(index),
-      },
-    );
+    _loadTags();
+  }
+
+  Future<void> _loadTags() async {
+    if (!mounted) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final tags = await _db.getAllTags();
+      if (mounted) {
+        setState(() {
+          _tags = tags;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        _showToast('Error loading tags: $e', isError: true);
+      }
+    }
   }
 
   Color _getTagColor(int index) {
@@ -38,6 +57,14 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
       const Color(0xFF00E676), // Green - Personal
     ];
     return colors[index % colors.length];
+  }
+
+  IconData _getTagIcon(String title) {
+    final index = AppConstants.documentCategories.indexOf(title);
+    if (index >= 0 && index < AppConstants.categoryIcons.length) {
+      return AppConstants.categoryIcons[index];
+    }
+    return Icons.label_rounded;
   }
 
   String _formatDateTime(DateTime dateTime) {
@@ -63,12 +90,28 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
     return '${displayHour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} $period';
   }
 
-  void _showAddTagDialog() {
+  void _showToast(String message, {bool isError = false, bool isWarning = false}) {
+    Fluttertoast.showToast(
+      msg: message,
+      toastLength: Toast.LENGTH_SHORT,
+      gravity: ToastGravity.BOTTOM,
+      timeInSecForIosWeb: 2,
+      backgroundColor: isError
+          ? Colors.red
+          : isWarning
+              ? Colors.orange
+              : Colors.green,
+      textColor: Colors.white,
+      fontSize: 14.0,
+    );
+  }
+
+  Future<void> _showAddTagDialog() async {
     final nameController = TextEditingController();
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    showDialog(
+    await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: isDark
@@ -111,28 +154,39 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
             ),
           ),
           ElevatedButton(
-            onPressed: () {
-              if (nameController.text.trim().isNotEmpty) {
-                setState(() {
-                  tags.add({
-                    'id': tags.length,
-                    'name': nameController.text.trim(),
-                    'icon': Icons.label_rounded,
-                    'createdAt': DateTime.now(),
-                    'color': _getTagColor(tags.length),
-                  });
-                });
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('Tag added successfully'),
-                    backgroundColor: colorScheme.primary,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                );
+            onPressed: () async {
+              final tagName = nameController.text.trim();
+              if (tagName.isEmpty) {
+                _showToast('Please enter a tag name', isWarning: true);
+                return;
+              }
+
+              // Check for duplicate tag names
+              final existingTag = _tags.firstWhere(
+                (tag) => tag.title.toLowerCase() == tagName.toLowerCase(),
+                orElse: () => Tag(title: ''),
+              );
+              
+              if (existingTag.title.isNotEmpty) {
+                _showToast('Tag "$tagName" already exists', isWarning: true);
+                return;
+              }
+
+              try {
+                final tag = Tag(title: tagName);
+                await _db.insertTag(tag);
+                
+                if (mounted) {
+                  Navigator.pop(context);
+                  // Reload tags from database
+                  await _loadTags();
+                  
+                  _showToast('Tag "$tagName" added successfully');
+                }
+              } catch (e) {
+                if (mounted) {
+                  _showToast('Error adding tag: $e', isError: true);
+                }
               }
             },
             style: ElevatedButton.styleFrom(
@@ -152,7 +206,14 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
   void _showDeleteConfirmation(int index) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final tagName = tags[index]['name'] as String;
+    final tag = _tags[index];
+    final tagName = tag.title;
+
+    // Prevent deleting default tags
+    if (tag.isDefault) {
+      _showToast('Default tags cannot be deleted', isWarning: true);
+      return;
+    }
 
     showDialog(
       context: context,
@@ -185,21 +246,36 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
             ),
           ),
           ElevatedButton(
-            onPressed: () {
-              setState(() {
-                tags.removeAt(index);
-              });
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text('Tag deleted'),
-                  backgroundColor: Colors.red,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              );
+            onPressed: () async {
+              if (tag.id == null) {
+                Navigator.pop(context);
+                if (mounted) {
+                  _showToast('Invalid tag ID', isError: true);
+                }
+                return;
+              }
+
+              try {
+                final rowsAffected = await _db.deleteTag(tag.id!);
+                
+                if (mounted) {
+                  Navigator.pop(context);
+                  
+                  if (rowsAffected > 0) {
+                    // Reload tags from database
+                    await _loadTags();
+                    
+                    _showToast('Tag "$tagName" deleted successfully', isError: true);
+                  } else {
+                    _showToast('Failed to delete tag', isError: true);
+                  }
+                }
+              } catch (e) {
+                Navigator.pop(context);
+                if (mounted) {
+                  _showToast('Error: ${e.toString()}', isError: true);
+                }
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -289,46 +365,52 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
           ),
         ],
       ),
-      body: tags.isEmpty
-          ? _buildEmptyState(context, colorScheme, isDark)
-          : SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppConstants.spacingM,
-                vertical: AppConstants.spacingL,
+      body: _isLoading
+          ? Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header Info
-                  Text(
-                    '${tags.length} ${tags.length == 1 ? 'Tag' : 'Tags'}',
-                    style: TextStyle(
-                      color: colorScheme.onBackground.withOpacity(0.6),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
+            )
+          : _tags.isEmpty
+              ? _buildEmptyState(context, colorScheme, isDark)
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppConstants.spacingM,
+                    vertical: AppConstants.spacingL,
                   ),
-                  const SizedBox(height: AppConstants.spacingM),
-                  // Tags List
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: tags.length,
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(height: AppConstants.spacingS),
-                    itemBuilder: (context, index) {
-                      return _buildTagCard(
-                        context,
-                        tags[index],
-                        index,
-                        colorScheme,
-                        isDark,
-                      );
-                    },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header Info
+                      Text(
+                        '${_tags.length} ${_tags.length == 1 ? 'Tag' : 'Tags'}',
+                        style: TextStyle(
+                          color: colorScheme.onBackground.withOpacity(0.6),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: AppConstants.spacingM),
+                      // Tags List
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _tags.length,
+                        separatorBuilder: (context, index) =>
+                            const SizedBox(height: AppConstants.spacingS),
+                        itemBuilder: (context, index) {
+                          return _buildTagCard(
+                            context,
+                            _tags[index],
+                            index,
+                            colorScheme,
+                            isDark,
+                          );
+                        },
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
+                ),
     );
   }
 
@@ -396,15 +478,16 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
 
   Widget _buildTagCard(
     BuildContext context,
-    Map<String, dynamic> tag,
+    Tag tag,
     int index,
     ColorScheme colorScheme,
     bool isDark,
   ) {
-    final tagColor = tag['color'] as Color;
-    final tagIcon = tag['icon'] as IconData;
-    final tagName = tag['name'] as String;
-    final createdAt = tag['createdAt'] as DateTime;
+    final tagColor = _getTagColor(index);
+    final tagIcon = _getTagIcon(tag.title);
+    final tagName = tag.title;
+    final createdAt = tag.createdAt;
+    final isDefault = tag.isDefault;
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
@@ -424,10 +507,12 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
           color: isDark ? colorScheme.surface.withOpacity(0.6) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isDark
-                ? colorScheme.outline.withOpacity(0.3)
-                : colorScheme.outline.withOpacity(0.08),
-            width: 1,
+            color: isDefault
+                ? colorScheme.primary.withOpacity(0.3)
+                : (isDark
+                    ? colorScheme.outline.withOpacity(0.3)
+                    : colorScheme.outline.withOpacity(0.08)),
+            width: isDefault ? 2 : 1,
           ),
           boxShadow: [
             BoxShadow(
@@ -477,14 +562,50 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          tagName,
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: -0.2,
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                tagName,
+                                style: TextStyle(
+                                  color: colorScheme.onSurface,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: -0.2,
+                                ),
+                              ),
+                            ),
+                            if (isDefault)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.lock_rounded,
+                                      size: 10,
+                                      color: colorScheme.primary,
+                                    ),
+                                    const SizedBox(width: 2),
+                                    Text(
+                                      'Default',
+                                      style: TextStyle(
+                                        color: colorScheme.primary,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Row(
@@ -509,63 +630,63 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
                     ),
                   ),
                   // Actions
-                  PopupMenuButton<String>(
-                    icon: Icon(
-                      Icons.more_vert_rounded,
-                      color: colorScheme.onSurface.withOpacity(0.5),
-                      size: 20,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        value: 'edit',
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.edit_rounded,
-                              size: 18,
-                              color: colorScheme.onSurface.withOpacity(0.7),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Edit',
-                              style: TextStyle(
-                                color: colorScheme.onSurface,
-                                fontSize: 14,
+                  if (!isDefault)
+                    PopupMenuButton<String>(
+                      icon: Icon(
+                        Icons.more_vert_rounded,
+                        color: colorScheme.onSurface.withOpacity(0.5),
+                        size: 20,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.edit_rounded,
+                                size: 18,
+                                color: colorScheme.onSurface.withOpacity(0.7),
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 8),
+                              Text(
+                                'Edit',
+                                style: TextStyle(
+                                  color: colorScheme.onSurface,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.delete_outline_rounded,
-                              size: 18,
-                              color: Colors.red.withOpacity(0.7),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Delete',
-                              style: TextStyle(color: Colors.red, fontSize: 14),
-                            ),
-                          ],
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.delete_outline_rounded,
+                                size: 18,
+                                color: Colors.red.withOpacity(0.7),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Delete',
+                                style: TextStyle(color: Colors.red, fontSize: 14),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                    onSelected: (value) {
-                      if (value == 'delete') {
-                        _showDeleteConfirmation(index);
-                      } else if (value == 'edit') {
-                        // Handle edit
-                        _showEditTagDialog(index);
-                      }
-                    },
-                  ),
+                      ],
+                      onSelected: (value) {
+                        if (value == 'delete') {
+                          _showDeleteConfirmation(index);
+                        } else if (value == 'edit') {
+                          _showEditTagDialog(index);
+                        }
+                      },
+                    ),
                 ],
               ),
             ),
@@ -576,8 +697,15 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
   }
 
   void _showEditTagDialog(int index) {
-    final tag = tags[index];
-    final nameController = TextEditingController(text: tag['name'] as String);
+    final tag = _tags[index];
+    
+    // Prevent editing default tags
+    if (tag.isDefault) {
+      _showToast('Default tags cannot be edited', isWarning: true);
+      return;
+    }
+
+    final nameController = TextEditingController(text: tag.title);
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -624,22 +752,53 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
             ),
           ),
           ElevatedButton(
-            onPressed: () {
-              if (nameController.text.trim().isNotEmpty) {
-                setState(() {
-                  tags[index]['name'] = nameController.text.trim();
-                });
+            onPressed: () async {
+              final newTagName = nameController.text.trim();
+              if (newTagName.isEmpty) {
+                _showToast('Please enter a tag name', isWarning: true);
+                return;
+              }
+
+              // Check if name changed
+              if (newTagName == tag.title) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('Tag updated successfully'),
-                    backgroundColor: colorScheme.primary,
-                    behavior: SnackBarBehavior.floating,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+                return;
+              }
+
+              // Check for duplicate tag names (excluding current tag)
+              final existingTag = _tags.firstWhere(
+                (t) => t.id != tag.id && 
+                       t.title.toLowerCase() == newTagName.toLowerCase(),
+                orElse: () => Tag(title: ''),
+              );
+              
+              if (existingTag.title.isNotEmpty) {
+                _showToast('Tag "$newTagName" already exists', isWarning: true);
+                return;
+              }
+
+              try {
+                final updatedTag = tag.copyWith(
+                  title: newTagName,
                 );
+                final rowsAffected = await _db.updateTag(updatedTag);
+                
+                if (mounted) {
+                  Navigator.pop(context);
+                  
+                  if (rowsAffected > 0) {
+                    // Reload tags from database
+                    await _loadTags();
+                    
+                    _showToast('Tag updated to "$newTagName"');
+                  } else {
+                    _showToast('Failed to update tag', isError: true);
+                  }
+                }
+              } catch (e) {
+                if (mounted) {
+                  _showToast('Error: $e', isError: true);
+                }
               }
             },
             style: ElevatedButton.styleFrom(

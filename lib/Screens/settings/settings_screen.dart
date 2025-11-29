@@ -33,6 +33,9 @@ class SettingsScreen extends StatelessWidget {
                   // Main Settings
                   _buildSettingsSection(context, colorScheme, isDark, [
                     _SettingsItem(
+                      onTap: () {
+                        NavigationService.toTools();
+                      },
                       icon: Icons.auto_awesome_rounded,
                       title: 'ScanifyAI Tools',
                       trailing: _SettingsArrow(),
@@ -47,11 +50,7 @@ class SettingsScreen extends StatelessWidget {
                       icon: Icons.delete_outline_rounded,
                       title: 'Trash',
                       trailing: _SettingsArrow(),
-                    ),
-                    _SettingsItem(
-                      icon: Icons.notifications_outlined,
-                      title: 'Notifications',
-                      trailing: _SettingsArrow(),
+                      onTap: () => NavigationService.toTrash(),
                     ),
                     _SettingsItem(
                       icon: Icons.dark_mode_rounded,

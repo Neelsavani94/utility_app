@@ -3,10 +3,13 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:pro_image_editor/pro_image_editor.dart';
+import 'package:provider/provider.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/file_storage_service.dart';
+import '../../Services/database_helper.dart';
+import '../../Providers/home_provider.dart';
 import 'models/image_item.dart';
 
 class ImageToPdfScreen extends StatefulWidget {
@@ -484,25 +487,35 @@ class _ImageToPdfScreenState extends State<ImageToPdfScreen> {
         _pdfProgress = currentStep / totalSteps;
       });
 
-      final directory = await getApplicationDocumentsDirectory();
-      final downloadsDir = Directory('${directory.path}/Download/Scanify AI');
-      if (!await downloadsDir.exists()) {
-        await downloadsDir.create(recursive: true);
-      }
-
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final pdfFile = File(
-        '${downloadsDir.path}/Image_to_PDF_$timestamp.pdf',
-      );
-
-      final pdfBytes = await pdfDocument.save();
+      final pdfBytesList = await pdfDocument.save();
       pdfDocument.dispose();
+      final pdfBytes = Uint8List.fromList(pdfBytesList);
 
       setState(() {
         _pdfProgress = 0.99;
       });
 
-      await pdfFile.writeAsBytes(pdfBytes);
+      // Save PDF using file storage service
+      final fileStorageService = FileStorageService.instance;
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final docId = await fileStorageService.savePDFFile(
+        pdfBytes: pdfBytes,
+        fileName: 'Image_to_PDF_$timestamp.pdf',
+        title: 'Image_to_PDF',
+      );
+      
+      // Get the saved file path from database
+      String? pdfPath;
+      if (docId != null) {
+        final document = await DatabaseHelper.instance.getDocumentById(docId);
+        pdfPath = document?.imagePath;
+        
+        // Refresh home screen documents
+        if (mounted) {
+          final provider = Provider.of<HomeProvider>(context, listen: false);
+          provider.loadDocuments();
+        }
+      }
 
       setState(() {
         _isLoading = false;
@@ -518,8 +531,10 @@ class _ImageToPdfScreenState extends State<ImageToPdfScreen> {
           ),
         );
 
-        // Navigate to PDF viewer
-        NavigationService.toScanPDFViewer(pdfPath: pdfFile.path);
+        // Navigate to PDF viewer if path is available
+        if (pdfPath != null) {
+          NavigationService.toScanPDFViewer(pdfPath: pdfPath);
+        }
       }
     } catch (e) {
       setState(() {

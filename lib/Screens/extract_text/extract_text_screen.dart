@@ -11,7 +11,12 @@ import '../../Routes/navigation_service.dart';
 import '../../Models/extracted_text_model.dart';
 
 class ExtractTextScreen extends StatefulWidget {
-  const ExtractTextScreen({super.key});
+  final bool autoPickImage;
+  
+  const ExtractTextScreen({
+    super.key,
+    this.autoPickImage = false,
+  });
 
   @override
   State<ExtractTextScreen> createState() => _ExtractTextScreenState();
@@ -24,6 +29,21 @@ class _ExtractTextScreenState extends State<ExtractTextScreen> {
   ExtractedTextModel? _currentFile;
   PageController? _pageController;
   int _currentPageIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-trigger image picking if requested
+    if (widget.autoPickImage) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          final colorScheme = Theme.of(context).colorScheme;
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          _pickImage(colorScheme, isDark);
+        }
+      });
+    }
+  }
 
   @override
   void dispose() {

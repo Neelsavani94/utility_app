@@ -26,13 +26,23 @@ import 'Screens/esign/sign_list_screen.dart';
 import 'Screens/esign/sign_create_screen.dart';
 import 'modules/split_pdf/split_pdf_screen.dart';
 import 'modules/split_pdf/split_pdf_images_list_screen.dart';
+import 'modules/split_pdf/split_pdf_page_editor_screen.dart';
 import 'modules/split_pdf/models/pdf_page_image.dart';
+import 'dart:typed_data';
 import 'modules/image_to_pdf/image_to_pdf_screen.dart';
 import 'modules/compress/compress_screen.dart';
 import 'modules/watermark/watermark_screen.dart';
+import 'Screens/trash/trash_screen.dart';
+import 'Screens/scanner/simple_scanner_type_screen.dart';
+import 'Screens/scanner/simple_scanner_camera_screen.dart';
+import 'Screens/scanner/simple_scanner_editor_screen.dart';
+import 'Screens/scanner/ai_scanner_camera_screen.dart';
+import 'Screens/scanner/ai_scanner_editor_screen.dart';
+import 'Screens/favorites/favorites_screen.dart';
+import 'Screens/image_viewer/image_viewer_screen.dart';
 import 'dart:io';
-import 'dart:typed_data';
 import 'Theme/theme.dart';
+import 'Services/database_helper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +51,8 @@ void main() async {
     DeviceOrientation.portraitDown,
   ]);
   await GetStorage.init();
+  // Initialize database
+  await DatabaseHelper.instance.database;
   runApp(const MyApp());
 }
 
@@ -87,7 +99,11 @@ class MyApp extends StatelessWidget {
             ),
             GetPage(
               name: AppRoutes.extractText,
-              page: () => const ExtractTextScreen(),
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                final autoPickImage = arguments?['autoPickImage'] as bool? ?? false;
+                return ExtractTextScreen(autoPickImage: autoPickImage);
+              },
             ),
             GetPage(
               name: AppRoutes.qrReader,
@@ -159,6 +175,16 @@ class MyApp extends StatelessWidget {
               },
             ),
             GetPage(
+              name: AppRoutes.splitPDFPageEditor,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                return SplitPdfPageEditorScreen(
+                  initialBytes: arguments!['initialBytes'] as Uint8List,
+                  onImageEdited: arguments['onImageEdited'] as Function(Uint8List)?,
+                );
+              },
+            ),
+            GetPage(
               name: AppRoutes.imageToPDF,
               page: () => const ImageToPdfScreen(),
             ),
@@ -177,6 +203,64 @@ class MyApp extends StatelessWidget {
             GetPage(
               name: AppRoutes.esignCreate,
               page: () => const SignCreateScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.trash,
+              page: () => const TrashScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.simpleScannerType,
+              page: () => const SimpleScannerTypeScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.simpleScannerCamera,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                return SimpleScannerCameraScreen(
+                  scanType: arguments!['scanType'] as ScanType,
+                );
+              },
+            ),
+            GetPage(
+              name: AppRoutes.simpleScannerEditor,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                return SimpleScannerEditorScreen(
+                  images: (arguments!['images'] as List)
+                      .map((e) => e as File)
+                      .toList(),
+                  scanType: arguments['scanType'] as ScanType,
+                );
+              },
+            ),
+            GetPage(
+              name: AppRoutes.aiScannerCamera,
+              page: () => const AIScannerCameraScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.aiScannerEditor,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                return AIScannerEditorScreen(
+                  images: (arguments!['images'] as List)
+                      .map((e) => e as File)
+                      .toList(),
+                );
+              },
+            ),
+            GetPage(
+              name: AppRoutes.favorites,
+              page: () => const FavoritesScreen(),
+            ),
+            GetPage(
+              name: AppRoutes.imageViewer,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                return ImageViewerScreen(
+                  imagePath: arguments!['imagePath'] as String,
+                  imageName: arguments['imageName'] as String?,
+                );
+              },
             ),
           ],
           unknownRoute: GetPage(

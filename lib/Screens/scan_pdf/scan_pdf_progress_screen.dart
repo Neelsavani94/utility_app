@@ -3,9 +3,12 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
-import 'package:path_provider/path_provider.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/file_storage_service.dart';
+import '../../Services/database_helper.dart';
+import '../../Providers/home_provider.dart';
+import 'package:provider/provider.dart';
 
 class ScanPDFProgressScreen extends StatefulWidget {
   final List<File> imageFiles;
@@ -177,20 +180,10 @@ class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
       );
       _percentageController.forward(from: 0);
 
-      // Save PDF to Downloads folder
-      final directory = await getApplicationDocumentsDirectory();
-      final downloadsDir = Directory('${directory.path}/Download/Scanify AI');
-      if (!await downloadsDir.exists()) {
-        await downloadsDir.create(recursive: true);
-      }
-
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final pdfFile = File(
-        '${downloadsDir.path}/Doc_Scan_PDF_$timestamp.pdf',
-      );
-
       // Generate PDF bytes
-      final pdfBytes = await pdfDocument.save();
+      final pdfBytesList = await pdfDocument.save();
+      pdfDocument.dispose();
+      final pdfBytes = Uint8List.fromList(pdfBytesList);
       
       // Update progress for writing file (95% to 99%)
       setState(() {
@@ -208,13 +201,31 @@ class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
       );
       _percentageController.forward(from: 0);
       
-      // Write PDF to file
-      await pdfFile.writeAsBytes(pdfBytes);
-      pdfDocument.dispose();
+      // Save PDF using file storage service
+      final fileStorageService = FileStorageService.instance;
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final docId = await fileStorageService.savePDFFile(
+        pdfBytes: pdfBytes,
+        fileName: 'Doc_Scan_PDF_$timestamp.pdf',
+        title: 'Doc_Scan_PDF',
+      );
+      
+      // Get the saved file path from database
+      String? pdfPath;
+      if (docId != null) {
+        final document = await DatabaseHelper.instance.getDocumentById(docId);
+        pdfPath = document?.imagePath;
+        
+        // Refresh home screen documents
+        if (mounted) {
+          final provider = Provider.of<HomeProvider>(context, listen: false);
+          provider.loadDocuments();
+        }
+      }
 
       // Final progress update (100%)
       setState(() {
-        _pdfPath = pdfFile.path;
+        _pdfPath = pdfPath ?? '';
         _progress = 1.0;
         _percentageAnimation = Tween<double>(
           begin: _percentageAnimation.value,

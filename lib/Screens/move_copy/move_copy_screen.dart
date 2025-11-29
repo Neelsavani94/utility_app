@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../Constants/app_constants.dart';
 import '../../Models/document_model.dart';
@@ -161,9 +162,7 @@ class MoveCopyScreen extends StatelessWidget {
     bool isDark,
   ) {
     return GestureDetector(
-      onTap: () {
-        // Navigate to document detail
-      },
+      onTap: () => _handleDocumentTap(context, doc),
       child: Container(
         padding: const EdgeInsets.symmetric(
           vertical: AppConstants.spacingM,
@@ -179,20 +178,8 @@ class MoveCopyScreen extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Compact Icon
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: colorScheme.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                Icons.description_rounded,
-                color: colorScheme.primary,
-                size: 30,
-              ),
-            ),
+            // Thumbnail or Icon
+            _buildDocumentThumbnail(doc, colorScheme, 56),
             const SizedBox(width: AppConstants.spacingM),
             // Content
             Expanded(
@@ -201,7 +188,7 @@ class MoveCopyScreen extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    document.name,
+                    doc.name,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w600,
                       fontSize: 14,
@@ -214,7 +201,7 @@ class MoveCopyScreen extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          document.formattedDate,
+                          doc.formattedDate,
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
                                 color: colorScheme.onSurface.withOpacity(0.5),
@@ -237,7 +224,7 @@ class MoveCopyScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                document.category,
+                doc.category,
                 style: TextStyle(
                   color: colorScheme.primary,
                   fontSize: 9,
@@ -295,5 +282,90 @@ class MoveCopyScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildDocumentThumbnail(DocumentModel document, ColorScheme colorScheme, double size) {
+    final thumbnailPath = document.thumbnailPath;
+    
+    // If thumbnail exists and is not empty, show thumbnail
+    if (thumbnailPath != null && thumbnailPath.isNotEmpty) {
+      final thumbnailFile = File(thumbnailPath);
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: colorScheme.outline.withOpacity(0.1),
+            width: 1,
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.file(
+            thumbnailFile,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              // Fallback to icon if thumbnail fails to load
+              return Container(
+                decoration: BoxDecoration(
+                  color: colorScheme.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.description_rounded,
+                  color: colorScheme.primary,
+                  size: size * 0.5,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    }
+    
+    // Default icon
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: colorScheme.primary.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(
+        Icons.description_rounded,
+        color: colorScheme.primary,
+        size: size * 0.5,
+      ),
+    );
+  }
+
+  void _handleDocumentTap(BuildContext context, DocumentModel document) {
+    final filePath = document.imagePath ?? document.thumbnailPath;
+    if (filePath == null || filePath.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('File path not available'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return;
+    }
+
+    final category = document.category.toLowerCase();
+    final isPDF = category == 'pdf' || 
+                  filePath.toLowerCase().endsWith('.pdf') ||
+                  document.name.toLowerCase().endsWith('.pdf');
+
+    if (isPDF) {
+      // Navigate to PDF viewer
+      NavigationService.toScanPDFViewer(pdfPath: filePath);
+    } else {
+      // Navigate to image viewer
+      NavigationService.toImageViewer(
+        imagePath: filePath,
+        imageName: document.name,
+      );
+    }
   }
 }

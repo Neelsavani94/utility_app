@@ -6,6 +6,9 @@ import 'package:pro_image_editor/pro_image_editor.dart';
 
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/file_storage_service.dart';
+import '../../Providers/home_provider.dart';
+import 'package:provider/provider.dart';
 
 class PhotoEditorScreen extends StatefulWidget {
   final List<File> imageFiles;
@@ -119,34 +122,62 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   ),
                   child: SafeArea(
                     top: false,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        FilledButton.icon(
-                          onPressed: () => _openEditor(_currentIndex),
-                          icon: const Icon(Icons.auto_fix_high_rounded),
-                          label: const Text('Edit Image'),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: AppConstants.spacingM,
-                              horizontal: AppConstants.spacingM,
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: FilledButton.icon(
+                                onPressed: () => _openEditor(_currentIndex),
+                                icon: const Icon(Icons.auto_fix_high_rounded),
+                                label: const Text('Edit'),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: AppConstants.spacingM,
+                                    horizontal: AppConstants.spacingS,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                              ),
                             ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
+                            const SizedBox(width: AppConstants.spacingS),
+                            Expanded(
+                              child: FilledButton.icon(
+                                onPressed: _saveAllImages,
+                                icon: const Icon(Icons.save_rounded),
+                                label: const Text('Save'),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: AppConstants.spacingM,
+                                    horizontal: AppConstants.spacingS,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                        FilledButton.icon(
-                          onPressed: _exportToPdf,
-                          icon: const Icon(Icons.picture_as_pdf_rounded),
-                          label: const Text('Generate PDF'),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: AppConstants.spacingM,
-                              horizontal: AppConstants.spacingM,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
+                        const SizedBox(height: AppConstants.spacingS),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _exportToPdf,
+                            icon: const Icon(Icons.picture_as_pdf_rounded),
+                            label: const Text('Generate PDF'),
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: AppConstants.spacingM,
+                                horizontal: AppConstants.spacingM,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18),
+                              ),
                             ),
                           ),
                         ),
@@ -318,6 +349,51 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           backgroundColor: Theme.of(context).colorScheme.primary,
         ),
       );
+    }
+  }
+
+  Future<void> _saveAllImages() async {
+    if (_images.isEmpty) {
+      _showMessage('No images to save');
+      return;
+    }
+
+    try {
+      final fileStorageService = FileStorageService.instance;
+      int savedCount = 0;
+
+      for (int i = 0; i < _images.length; i++) {
+        final image = _images[i];
+        final bytes = image.editedBytes ?? await image.loadBytes();
+        
+        final docId = await fileStorageService.saveImageFile(
+          imageBytes: bytes,
+          fileName: image.displayName,
+          title: 'Photo_Edited_${i + 1}',
+        );
+
+        if (docId != null) {
+          savedCount++;
+        }
+      }
+
+      // Refresh home screen documents
+      if (mounted) {
+        final provider = Provider.of<HomeProvider>(context, listen: false);
+        provider.loadDocuments();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$savedCount image(s) saved successfully'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        _showMessage('Error saving images: $e');
+      }
     }
   }
 

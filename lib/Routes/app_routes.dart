@@ -20,9 +20,18 @@ class AppRoutes {
   static const String scanPDFViewer = '/scan-pdf-viewer';
   static const String splitPDF = '/split-pdf';
   static const String splitPDFImagesList = '/split-pdf-images-list';
+  static const String splitPDFPageEditor = '/split-pdf-page-editor';
   static const String imageToPDF = '/image-to-pdf';
   static const String compress = '/compress';
   static const String watermark = '/watermark';
+  static const String trash = '/trash';
+  static const String simpleScannerType = '/simple-scanner-type';
+  static const String simpleScannerCamera = '/simple-scanner-camera';
+  static const String simpleScannerEditor = '/simple-scanner-editor';
+  static const String aiScannerCamera = '/ai-scanner-camera';
+  static const String aiScannerEditor = '/ai-scanner-editor';
+  static const String favorites = '/favorites';
+  static const String imageViewer = '/image-viewer';
   
   // Prevent instantiation
   AppRoutes._();

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'app_routes.dart';
@@ -84,8 +85,11 @@ class NavigationService {
     return navigateTo(AppRoutes.esignCreate);
   }
 
-  static Future<dynamic>? toExtractText() {
-    return navigateTo(AppRoutes.extractText);
+  static Future<dynamic>? toExtractText({bool autoPickImage = false}) {
+    return navigateTo(
+      AppRoutes.extractText,
+      arguments: {'autoPickImage': autoPickImage},
+    );
   }
 
   static Future<dynamic>? toQRReader() {
@@ -147,6 +151,19 @@ class NavigationService {
     );
   }
 
+  static Future<dynamic>? toSplitPdfPageEditor({
+    required Uint8List initialBytes,
+    Function(Uint8List)? onImageEdited,
+  }) {
+    return navigateTo(
+      AppRoutes.splitPDFPageEditor,
+      arguments: {
+        'initialBytes': initialBytes,
+        'onImageEdited': onImageEdited,
+      },
+    );
+  }
+
   static Future<dynamic>? toImageToPDF() {
     return navigateTo(AppRoutes.imageToPDF);
   }
@@ -157,6 +174,62 @@ class NavigationService {
 
   static Future<dynamic>? toWatermark() {
     return navigateTo(AppRoutes.watermark);
+  }
+
+  static Future<dynamic>? toTrash() {
+    return navigateTo(AppRoutes.trash);
+  }
+
+  static Future<dynamic>? toSimpleScannerType() {
+    return navigateTo(AppRoutes.simpleScannerType);
+  }
+
+  static Future<dynamic>? toSimpleScannerCamera({required dynamic scanType}) {
+    return navigateTo(
+      AppRoutes.simpleScannerCamera,
+      arguments: {'scanType': scanType},
+    );
+  }
+
+  static Future<dynamic>? toSimpleScannerEditor({
+    required List<File> images,
+    required dynamic scanType,
+  }) {
+    return navigateTo(
+      AppRoutes.simpleScannerEditor,
+      arguments: {
+        'images': images,
+        'scanType': scanType,
+      },
+    );
+  }
+
+  static Future<dynamic>? toAIScannerCamera() {
+    return navigateTo(AppRoutes.aiScannerCamera);
+  }
+
+  static Future<dynamic>? toAIScannerEditor({required List<File> images}) {
+    return navigateTo(
+      AppRoutes.aiScannerEditor,
+      arguments: {'images': images},
+    );
+  }
+
+  static Future<dynamic>? toFavorites() {
+    return navigateTo(AppRoutes.favorites);
+  }
+
+  static Future<dynamic>? toImageViewer({
+    required String imagePath,
+    String? imageName,
+  }) {
+    return navigateTo(
+      AppRoutes.imageViewer,
+      arguments: {
+        'imagePath': imagePath,
+        'imageName': imageName,
+      },
+    );
   }
 }
 

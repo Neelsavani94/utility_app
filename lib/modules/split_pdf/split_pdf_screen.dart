@@ -5,9 +5,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:pro_image_editor/pro_image_editor.dart';
+import 'package:provider/provider.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/file_storage_service.dart';
+import '../../Providers/home_provider.dart';
 import 'models/pdf_page_image.dart';
 
 class SplitPdfScreen extends StatefulWidget {
@@ -455,30 +457,41 @@ class _SplitPdfScreenState extends State<SplitPdfScreen> {
 
     final pageImage = _pageImages[index];
     final sourceBytes = await pageImage.loadBytes();
+    final currentIndex = index;
 
-    final editedBytes = await Navigator.of(context).push<Uint8List>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => _ProImageEditorPage(
-          initialBytes: sourceBytes,
-          watermarkText: 'Scanify AI',
-          hostTheme: Theme.of(context),
-        ),
-      ),
+    // Navigate to editor screen and wait for result
+    final result = await NavigationService.toSplitPdfPageEditor(
+      initialBytes: sourceBytes,
+      onImageEdited: null, // We'll use navigation result instead
     );
 
-    if (editedBytes != null && mounted) {
+    // Check if we got edited bytes back from the editor
+    if (mounted && result != null && result is Uint8List) {
+      final Uint8List editedBytes = result;
+      
+      // Create a new list with updated image
+      final updatedPageImages = List<PdfPageImage>.from(_pageImages);
+      updatedPageImages[currentIndex] = PdfPageImage(
+        pageNumber: pageImage.pageNumber,
+        imageFile: pageImage.imageFile,
+        imageBytes: pageImage.imageBytes,
+        editedBytes: editedBytes,
+        id: pageImage.id,
+      );
+
       setState(() {
-        _pageImages[index].editedBytes = editedBytes;
+        _pageImages = updatedPageImages;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Image edited successfully'),
-          duration: const Duration(seconds: 1),
-          backgroundColor: Theme.of(context).colorScheme.primary,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Image edited successfully'),
+            duration: const Duration(seconds: 1),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+          ),
+        );
+      }
     }
   }
 
@@ -486,25 +499,33 @@ class _SplitPdfScreenState extends State<SplitPdfScreen> {
     if (_pageImages.isEmpty) return;
 
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final downloadsDir = Directory('${directory.path}/Download/Scanify AI/Split PDF');
-      if (!await downloadsDir.exists()) {
-        await downloadsDir.create(recursive: true);
-      }
-
+      final fileStorageService = FileStorageService.instance;
       int savedCount = 0;
+
       for (final pageImage in _pageImages) {
         final bytes = await pageImage.loadBytes();
         final fileName = _pdfFileName != null
             ? '${_pdfFileName!.replaceAll('.pdf', '')}_page_${pageImage.pageNumber}${pageImage.isEdited ? '_edited' : ''}.png'
             : 'page_${pageImage.pageNumber}${pageImage.isEdited ? '_edited' : ''}.png';
         
-        final imageFile = File('${downloadsDir.path}/$fileName');
-        await imageFile.writeAsBytes(bytes);
-        savedCount++;
+        final docId = await fileStorageService.saveImageFile(
+          imageBytes: bytes,
+          fileName: fileName,
+          title: _pdfFileName != null
+              ? '${_pdfFileName!.replaceAll('.pdf', '')}_page_${pageImage.pageNumber}'
+              : 'Page_${pageImage.pageNumber}',
+        );
+
+        if (docId != null) {
+          savedCount++;
+        }
       }
 
+      // Refresh home screen documents
       if (mounted) {
+        final provider = Provider.of<HomeProvider>(context, listen: false);
+        provider.loadDocuments();
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Saved $savedCount image(s) successfully'),
@@ -565,47 +586,6 @@ class _PreviewImageWidget extends StatelessWidget {
     }
     
     return const Center(child: Icon(Icons.error_outline));
-  }
-}
-
-class _ProImageEditorPage extends StatelessWidget {
-  const _ProImageEditorPage({
-    required this.initialBytes,
-    required this.watermarkText,
-    required this.hostTheme,
-  });
-
-  final Uint8List initialBytes;
-  final String watermarkText;
-  final ThemeData hostTheme;
-
-  @override
-  Widget build(BuildContext context) {
-    final configs = ProImageEditorConfigs(
-      designMode: hostTheme.brightness == Brightness.dark
-          ? ImageEditorDesignMode.cupertino
-          : ImageEditorDesignMode.material,
-      theme: hostTheme,
-      helperLines: const HelperLineConfigs(),
-    );
-
-    return Theme(
-      data: hostTheme,
-      child: ProImageEditor.memory(
-        initialBytes,
-        configs: configs,
-        callbacks: ProImageEditorCallbacks(
-          onImageEditingComplete: (bytes) async {
-            if (context.mounted) {
-              Navigator.of(context).pop(bytes);
-            }
-          },
-          onCloseEditor: (_) {
-            Navigator.of(context).maybePop();
-          },
-        ),
-      ),
-    );
   }
 }
 

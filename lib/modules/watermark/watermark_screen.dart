@@ -9,8 +9,12 @@ import 'package:share_plus/share_plus.dart';
 import 'package:open_file/open_file.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:image/image.dart' as img;
+import 'package:provider/provider.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/file_storage_service.dart';
+import '../../Services/database_helper.dart';
+import '../../Providers/home_provider.dart';
 
 class WatermarkScreen extends StatefulWidget {
   const WatermarkScreen({super.key});
@@ -352,28 +356,83 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       final extension = inputPath.split('.').last.toLowerCase();
       final watermarkText = _watermarkTextController.text;
 
-      // Get output directory
+      // Get output directory (for videos only)
       final directory = await getApplicationDocumentsDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final outputFileName = 'watermarked_$timestamp.$extension';
-      final outputPath = '${directory.path}/$outputFileName';
+      String outputPath = '${directory.path}/$outputFileName';
 
       setState(() {
         _progress = 0.2;
       });
 
       // Check file type and apply watermark accordingly
+      Uint8List? outputBytes;
+      String fileType = 'image';
+      
       if (['jpg', 'jpeg', 'png', 'bmp', 'webp'].contains(extension)) {
         // Image watermarking
-        await _watermarkImage(inputPath, outputPath, watermarkText);
-      } else if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(extension)) {
-        // Video watermarking
-        await _watermarkVideo(inputPath, outputPath, watermarkText);
+        outputBytes = await _watermarkImage(inputPath, watermarkText);
+        fileType = 'image';
       } else if (extension == 'pdf') {
-        // PDF watermarking (convert to images first)
-        await _watermarkPDF(inputPath, outputPath, watermarkText);
+        // PDF watermarking
+        outputBytes = await _watermarkPDF(inputPath, watermarkText);
+        fileType = 'pdf';
+      } else if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(extension)) {
+        // Video watermarking - save to temp file first
+        await _watermarkVideo(inputPath, outputPath, watermarkText);
+        // For videos, we use the outputPath directly
+        setState(() {
+          _progress = 1.0;
+          _isProcessing = false;
+          _outputPath = outputPath;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Watermark applied successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+        return; // Videos are handled differently
       } else {
         throw Exception('Unsupported file type: $extension');
+      }
+
+      if (outputBytes == null || outputBytes.isEmpty) {
+        throw Exception('Failed to generate watermarked file');
+      }
+
+      // Save using file storage service
+      final fileStorageService = FileStorageService.instance;
+      int? docId;
+      
+      if (fileType == 'image') {
+        docId = await fileStorageService.saveImageFile(
+          imageBytes: outputBytes,
+          fileName: outputFileName,
+          title: 'Watermarked_Image',
+        );
+      } else if (fileType == 'pdf') {
+        docId = await fileStorageService.savePDFFile(
+          pdfBytes: outputBytes,
+          fileName: outputFileName,
+          title: 'Watermarked_PDF',
+        );
+      }
+
+      // Get saved file path from database
+      if (docId != null) {
+        final document = await DatabaseHelper.instance.getDocumentById(docId);
+        outputPath = document?.imagePath ?? outputPath;
+        
+        // Refresh home screen documents
+        if (mounted) {
+          final provider = Provider.of<HomeProvider>(context, listen: false);
+          provider.loadDocuments();
+        }
       }
 
       setState(() {
@@ -412,8 +471,8 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     }
   }
 
-  Future<void> _watermarkImage(
-      String inputPath, String outputPath, String text) async {
+  Future<Uint8List?> _watermarkImage(
+      String inputPath, String text) async {
     setState(() {
       _progress = 0.4;
     });
@@ -447,20 +506,15 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         marginUnit: 'px',
         widthPercent: 0.5, // Watermark width as percentage of base image
         opacity: 0.5,
-        format: outputPath.toLowerCase().endsWith('.png') ? 'png' : 'jpeg',
+        format: 'jpeg',
         quality: 0.9,
       );
 
       setState(() {
-        _progress = 0.8;
-      });
-
-      // Save output image
-      await File(outputPath).writeAsBytes(outputBytes);
-
-      setState(() {
         _progress = 0.9;
       });
+
+      return outputBytes;
     } catch (e) {
       throw Exception('Failed to watermark image: $e');
     }
@@ -533,8 +587,8 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     }
   }
 
-  Future<void> _watermarkPDF(
-      String inputPath, String outputPath, String text) async {
+  Future<Uint8List?> _watermarkPDF(
+      String inputPath, String text) async {
     setState(() {
       _progress = 0.4;
     });
@@ -587,23 +641,19 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         _progress = 0.9;
       });
 
-      // Save the watermarked PDF
+      // Get the watermarked PDF bytes
       final List<int> bytes = await document.save();
       document.dispose();
 
-      await File(outputPath).writeAsBytes(bytes);
-
       setState(() {
-        _progress = 0.95;
+        _progress = 0.98;
       });
+
+      return Uint8List.fromList(bytes);
     } catch (e) {
       // If PDF library fails, show error - PDF watermarking should use PDF library
       throw Exception('PDF watermarking failed: $e. Please ensure the PDF file is valid.');
     }
-
-    setState(() {
-      _progress = 0.98;
-    });
   }
 
   Future<void> _shareFile() async {
