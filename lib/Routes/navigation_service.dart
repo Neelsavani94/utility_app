@@ -85,16 +85,13 @@ class NavigationService {
     return navigateTo(AppRoutes.esignCreate);
   }
 
-  static Future<dynamic>? toExtractText({bool autoPickImage = false}) {
+  static Future<dynamic>? toExtractText({String? imagePath}) {
     return navigateTo(
       AppRoutes.extractText,
-      arguments: {'autoPickImage': autoPickImage},
+      arguments: {'imagePath': imagePath},
     );
   }
 
-  static Future<dynamic>? toQRReader() {
-    return navigateTo(AppRoutes.qrReader);
-  }
 
   static Future<dynamic>? toQRGenerator() {
     return navigateTo(AppRoutes.qrGenerator);

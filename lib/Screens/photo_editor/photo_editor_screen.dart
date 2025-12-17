@@ -27,6 +27,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   final List<_EditableImage> _images = [];
 
   int _currentIndex = 0;
+  bool _isEditorOpen = false;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -39,6 +41,16 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _showMessage('Please pick at least one image to continue.');
         NavigationService.goBack();
+      });
+    } else {
+      // Open editor directly for the first image
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (mounted) {
+          setState(() {
+            _isEditorOpen = true;
+          });
+          await _openEditorDirectly(0);
+        }
       });
     }
   }
@@ -56,6 +68,19 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
+    // If editor is open or images are empty, show loading/empty state
+    if (_isEditorOpen || _images.isEmpty) {
+      return Scaffold(
+        backgroundColor: colorScheme.background,
+        body: _images.isEmpty
+            ? _buildEmptyState(colorScheme)
+            : const Center(
+                child: CircularProgressIndicator(),
+              ),
+      );
+    }
+
+    // Show preview screen only if editor is not open
     return Scaffold(
       backgroundColor: colorScheme.background,
       appBar: AppBar(
@@ -101,92 +126,90 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         ),
         centerTitle: true,
       ),
-      body: _images.isEmpty
-          ? _buildEmptyState(colorScheme)
-          : Column(
-              children: [
-                Expanded(
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(AppConstants.spacingL),
-                      child: _buildPreviewSection(colorScheme, isDark),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppConstants.spacingL,
-                    AppConstants.spacingM,
-                    AppConstants.spacingL,
-                    AppConstants.spacingL,
-                  ),
-                  child: SafeArea(
-                    top: false,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed: () => _openEditor(_currentIndex),
-                                icon: const Icon(Icons.auto_fix_high_rounded),
-                                label: const Text('Edit'),
-                                style: FilledButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: AppConstants.spacingM,
-                                    horizontal: AppConstants.spacingS,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(18),
-                                  ),
-                                ),
-                              ),
+      body: Column(
+        children: [
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(AppConstants.spacingL),
+                child: _buildPreviewSection(colorScheme, isDark),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppConstants.spacingL,
+              AppConstants.spacingM,
+              AppConstants.spacingL,
+              AppConstants.spacingL,
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () => _openEditor(_currentIndex),
+                          icon: const Icon(Icons.auto_fix_high_rounded),
+                          label: const Text('Edit'),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppConstants.spacingM,
+                              horizontal: AppConstants.spacingS,
                             ),
-                            const SizedBox(width: AppConstants.spacingS),
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed: _saveAllImages,
-                                icon: const Icon(Icons.save_rounded),
-                                label: const Text('Save'),
-                                style: FilledButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: AppConstants.spacingM,
-                                    horizontal: AppConstants.spacingS,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(18),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: AppConstants.spacingS),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: _exportToPdf,
-                            icon: const Icon(Icons.picture_as_pdf_rounded),
-                            label: const Text('Generate PDF'),
-                            style: FilledButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: AppConstants.spacingM,
-                                horizontal: AppConstants.spacingM,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(18),
-                              ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
                             ),
                           ),
                         ),
-                      ],
+                      ),
+                      const SizedBox(width: AppConstants.spacingS),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _saveAllImages,
+                          icon: const Icon(Icons.save_rounded),
+                          label: const Text('Save'),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppConstants.spacingM,
+                              horizontal: AppConstants.spacingS,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppConstants.spacingS),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _exportToPdf,
+                      icon: const Icon(Icons.picture_as_pdf_rounded),
+                      label: const Text('Generate PDF'),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: AppConstants.spacingM,
+                          horizontal: AppConstants.spacingM,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -318,6 +341,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   }
 
   Future<void> _openEditor(int index) async {
+    await _openEditorDirectly(index);
+  }
+
+  Future<void> _openEditorDirectly(int index) async {
     if (!mounted) return;
     
     final sourceBytes = await _images[index].loadBytes();
@@ -336,19 +363,64 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       ),
     );
 
+    if (mounted) {
+      setState(() {
+        _isEditorOpen = false;
+      });
+    }
+
     if (editedBytes != null && mounted) {
       setState(() {
         _images[index].editedBytes = editedBytes;
       });
       
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Image edited successfully'),
-          duration: const Duration(seconds: 1),
-          backgroundColor: Theme.of(context).colorScheme.primary,
-        ),
+      // Auto-save the edited image
+      await _autoSaveImage(index, editedBytes);
+    } else if (mounted) {
+      // If user cancelled, just go back
+      NavigationService.goBack();
+    }
+  }
+
+  Future<void> _autoSaveImage(int index, Uint8List editedBytes) async {
+    if (_isSaving) return; // Prevent duplicate saves
+    
+    try {
+      _isSaving = true;
+      final fileStorageService = FileStorageService.instance;
+      final image = _images[index];
+      
+      final docId = await fileStorageService.saveImageFile(
+        imageBytes: editedBytes,
+        fileName: image.displayName,
+        title: 'Photo_Edited_${DateTime.now().millisecondsSinceEpoch}',
       );
+
+      if (docId != null && mounted) {
+        // Refresh home screen documents
+        final provider = Provider.of<HomeProvider>(context, listen: false);
+        provider.loadDocuments();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Image saved successfully'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+
+        // Navigate back after saving
+        if (mounted) {
+          await Future.delayed(const Duration(milliseconds: 500));
+          NavigationService.goBack();
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _showMessage('Error saving image: $e');
+      }
+    } finally {
+      _isSaving = false;
     }
   }
 

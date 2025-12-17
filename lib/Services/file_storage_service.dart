@@ -294,5 +294,63 @@ class FileStorageService {
     }
     return fileName;
   }
+
+  /// Copy a file to a new location with a new name
+  Future<String?> copyFile({
+    required String sourcePath,
+    required String newFileName,
+    bool isPDF = false,
+  }) async {
+    try {
+      final sourceFile = File(sourcePath);
+      if (!await sourceFile.exists()) {
+        throw Exception('Source file does not exist');
+      }
+
+      final targetDir = isPDF ? await getPDFDirectory() : await getImagesDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      
+      // Get file extension
+      final extension = _getExtension(sourcePath);
+      
+      final targetPath = isPDF
+          ? '${targetDir.path}/pdf_$timestamp$extension'
+          : '${targetDir.path}/img_$timestamp$extension';
+      
+      await sourceFile.copy(targetPath);
+      
+      return targetPath;
+    } catch (e) {
+      print('Error copying file: $e');
+      return null;
+    }
+  }
+
+  /// Copy thumbnail file
+  Future<String?> copyThumbnail({
+    required String? sourceThumbnailPath,
+    required String newThumbnailName,
+  }) async {
+    try {
+      if (sourceThumbnailPath == null || sourceThumbnailPath.isEmpty) {
+        return null;
+      }
+
+      final sourceFile = File(sourceThumbnailPath);
+      if (!await sourceFile.exists()) {
+        return null;
+      }
+
+      final imagesDir = await getImagesDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final targetPath = '${imagesDir.path}/thumb_$timestamp.jpg';
+      
+      await sourceFile.copy(targetPath);
+      return targetPath;
+    } catch (e) {
+      print('Error copying thumbnail: $e');
+      return null;
+    }
+  }
 }
 

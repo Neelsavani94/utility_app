@@ -1,17 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:get_storage/get_storage.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Controller/theme_controller.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  static const String _showToolsKey = 'show_tools_on_home';
+
+  static bool getShowToolsOnHome() {
+    final storage = GetStorage();
+    // Default to true (show tools by default)
+    return storage.read<bool>(_showToolsKey) ?? true;
+  }
+
+  static void setShowToolsOnHome(bool value) {
+    final storage = GetStorage();
+    storage.write(_showToolsKey, value);
+  }
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+  }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final themeController = Get.find<ThemeController>();
+    final showTools = SettingsScreen.getShowToolsOnHome();
 
     return Scaffold(
       backgroundColor: colorScheme.background,
@@ -32,6 +57,19 @@ class SettingsScreen extends StatelessWidget {
                 children: [
                   // Main Settings
                   _buildSettingsSection(context, colorScheme, isDark, [
+                    _SettingsItem(
+                      icon: Icons.auto_awesome_rounded,
+                      title: 'Tools',
+                      subtitle: 'Show on Home Screen',
+                      trailing: _SettingsSwitch(
+                        value: showTools,
+                        onChanged: (value) {
+                          setState(() {
+                            SettingsScreen.setShowToolsOnHome(value);
+                          });
+                        },
+                      ),
+                    ),
                     _SettingsItem(
                       onTap: () {
                         NavigationService.toTools();

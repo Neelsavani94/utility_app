@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/in_app_purchase_service.dart';
 
 class PremiumScreen extends StatefulWidget {
   const PremiumScreen({super.key});
@@ -15,6 +17,9 @@ class _PremiumScreenState extends State<PremiumScreen>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
+  final InAppPurchaseService _purchaseService = InAppPurchaseService.instance;
+  bool _isLoading = false;
+  bool _isInitialized = false;
 
   @override
   void initState() {
@@ -39,6 +44,45 @@ class _PremiumScreenState extends State<PremiumScreen>
     );
 
     _animationController.forward();
+    _initializePurchaseService();
+  }
+
+  Future<void> _initializePurchaseService() async {
+    await _purchaseService.initialize();
+    if (mounted) {
+      setState(() {
+        _isInitialized = true;
+        _updateProductPrices();
+      });
+    }
+  }
+
+  void _updateProductPrices() {
+    // Update prices from store if available
+    for (var i = 0; i < subscriptionPlans.length; i++) {
+      final plan = subscriptionPlans[i];
+      final productId = _getProductIdForPlan(plan['duration'] as String);
+      final product = _purchaseService.getProductById(productId);
+      if (product != null) {
+        setState(() {
+          subscriptionPlans[i]['price'] = product.price;
+          subscriptionPlans[i]['productId'] = product.id;
+        });
+      }
+    }
+  }
+
+  String _getProductIdForPlan(String duration) {
+    switch (duration) {
+      case 'monthly':
+        return InAppPurchaseService.monthlyProductId;
+      case 'quarterly':
+        return InAppPurchaseService.quarterlyProductId;
+      case 'yearly':
+        return InAppPurchaseService.yearlyProductId;
+      default:
+        return InAppPurchaseService.quarterlyProductId;
+    }
   }
 
   @override
@@ -47,13 +91,14 @@ class _PremiumScreenState extends State<PremiumScreen>
     super.dispose();
   }
 
-  final List<Map<String, dynamic>> subscriptionPlans = [
+  List<Map<String, dynamic>> subscriptionPlans = [
     {
       'title': 'Monthly',
       'price': '\$1.99',
       'period': 'per month',
       'description': 'Auto-renewing subscription - Monthly',
       'duration': 'monthly',
+      'productId': InAppPurchaseService.monthlyProductId,
     },
     {
       'title': 'Quarterly',
@@ -62,6 +107,7 @@ class _PremiumScreenState extends State<PremiumScreen>
       'description': 'Auto-renewing subscription - Quarterly',
       'duration': 'quarterly',
       'isBestValue': true,
+      'productId': InAppPurchaseService.quarterlyProductId,
     },
     {
       'title': 'Yearly',
@@ -69,6 +115,7 @@ class _PremiumScreenState extends State<PremiumScreen>
       'period': 'per year',
       'description': 'Auto-renewing subscription - Yearly',
       'duration': 'yearly',
+      'productId': InAppPurchaseService.yearlyProductId,
     },
   ];
 
@@ -129,6 +176,16 @@ class _PremiumScreenState extends State<PremiumScreen>
                     horizontal: AppConstants.spacingM,
                   ),
                   child: _buildSubscribeButton(context, colorScheme),
+                ),
+
+                const SizedBox(height: AppConstants.spacingM),
+
+                // Restore Purchases Button
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppConstants.spacingM,
+                  ),
+                  child: _buildRestorePurchasesButton(context, colorScheme),
                 ),
 
                 const SizedBox(height: AppConstants.spacingXL),
@@ -534,6 +591,8 @@ class _PremiumScreenState extends State<PremiumScreen>
 
   Widget _buildSubscribeButton(BuildContext context, ColorScheme colorScheme) {
     final selectedPlan = subscriptionPlans[selectedPlanIndex];
+    final productId = selectedPlan['productId'] as String? ?? 
+        _getProductIdForPlan(selectedPlan['duration'] as String);
 
     return Container(
       width: double.infinity,
@@ -542,42 +601,170 @@ class _PremiumScreenState extends State<PremiumScreen>
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [colorScheme.primary, colorScheme.secondary],
+          colors: _isLoading
+              ? [Colors.grey, Colors.grey.shade700]
+              : [colorScheme.primary, colorScheme.secondary],
         ),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            // Handle subscription
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Subscribing to ${selectedPlan['title']} plan...',
-                ),
-                backgroundColor: colorScheme.primary,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            );
-          },
+          onTap: _isLoading || !_isInitialized
+              ? null
+              : () => _handleSubscribe(context, colorScheme, productId, selectedPlan),
           borderRadius: BorderRadius.circular(16),
           child: Center(
-            child: Text(
-              'Subscribe - ${selectedPlan['price']}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.5,
-              ),
-            ),
+            child: _isLoading
+                ? SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : Text(
+                    'Subscribe - ${selectedPlan['price']}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _handleSubscribe(
+    BuildContext context,
+    ColorScheme colorScheme,
+    String productId,
+    Map<String, dynamic> selectedPlan,
+  ) async {
+    if (!_purchaseService.isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('In-app purchases are not available'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final success = await _purchaseService.purchaseProduct(productId);
+      
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Processing ${selectedPlan['title']} subscription...',
+              ),
+              backgroundColor: colorScheme.primary,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Failed to initiate purchase'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        Fluttertoast.showToast(
+          msg: 'Error: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
+  }
+
+  Widget _buildRestorePurchasesButton(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) {
+    return TextButton(
+      onPressed: _isLoading ? null : _handleRestorePurchases,
+      child: Text(
+        'Restore Purchases',
+        style: TextStyle(
+          color: colorScheme.primary,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleRestorePurchases() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await _purchaseService.restorePurchases();
+      
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+
+        Fluttertoast.showToast(
+          msg: 'Restoring purchases...',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        Fluttertoast.showToast(
+          msg: 'Error restoring purchases: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
   }
 }

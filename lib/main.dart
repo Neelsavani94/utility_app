@@ -16,7 +16,6 @@ import 'Screens/settings/manage_tags_screen.dart';
 import 'Screens/premium/premium_screen.dart';
 import 'Screens/move_copy/move_copy_screen.dart';
 import 'Screens/extract_text/extract_text_screen.dart';
-import 'Screens/qr_reader/qr_reader_screen.dart';
 import 'Screens/qr_generator/qr_generator_screen.dart';
 import 'Screens/scan_pdf/scan_pdf_filter_screen.dart';
 import 'Screens/scan_pdf/scan_pdf_progress_screen.dart';
@@ -33,11 +32,6 @@ import 'modules/image_to_pdf/image_to_pdf_screen.dart';
 import 'modules/compress/compress_screen.dart';
 import 'modules/watermark/watermark_screen.dart';
 import 'Screens/trash/trash_screen.dart';
-import 'Screens/scanner/simple_scanner_type_screen.dart';
-import 'Screens/scanner/simple_scanner_camera_screen.dart';
-import 'Screens/scanner/simple_scanner_editor_screen.dart';
-import 'Screens/scanner/ai_scanner_camera_screen.dart';
-import 'Screens/scanner/ai_scanner_editor_screen.dart';
 import 'Screens/favorites/favorites_screen.dart';
 import 'Screens/image_viewer/image_viewer_screen.dart';
 import 'dart:io';
@@ -101,13 +95,9 @@ class MyApp extends StatelessWidget {
               name: AppRoutes.extractText,
               page: () {
                 final arguments = Get.arguments as Map<String, dynamic>?;
-                final autoPickImage = arguments?['autoPickImage'] as bool? ?? false;
-                return ExtractTextScreen(autoPickImage: autoPickImage);
+                final imagePath = arguments?['imagePath'] as String?;
+                return ExtractTextScreen(imagePath: imagePath);
               },
-            ),
-            GetPage(
-              name: AppRoutes.qrReader,
-              page: () => const QRReaderScreen(),
             ),
             GetPage(
               name: AppRoutes.qrGenerator,
@@ -144,10 +134,12 @@ class MyApp extends StatelessWidget {
                   filter: arguments['filter'] as String,
                   filteredImages: arguments['filteredImages'] != null
                       ? (arguments['filteredImages'] as Map<String, dynamic>)
-                          .map((key, value) => MapEntry(
+                            .map(
+                              (key, value) => MapEntry(
                                 key,
                                 value is Uint8List ? value : null,
-                              ))
+                              ),
+                            )
                       : null,
                 );
               },
@@ -170,7 +162,9 @@ class MyApp extends StatelessWidget {
               page: () {
                 final arguments = Get.arguments as Map<String, dynamic>?;
                 final rawList = (arguments?['pageImages'] as List?) ?? [];
-                final pageImages = rawList.map((e) => e as PdfPageImage).toList();
+                final pageImages = rawList
+                    .map((e) => e as PdfPageImage)
+                    .toList();
                 return SplitPdfImagesListScreen(pageImages: pageImages);
               },
             ),
@@ -180,7 +174,8 @@ class MyApp extends StatelessWidget {
                 final arguments = Get.arguments as Map<String, dynamic>?;
                 return SplitPdfPageEditorScreen(
                   initialBytes: arguments!['initialBytes'] as Uint8List,
-                  onImageEdited: arguments['onImageEdited'] as Function(Uint8List)?,
+                  onImageEdited:
+                      arguments['onImageEdited'] as Function(Uint8List)?,
                 );
               },
             ),
@@ -204,50 +199,7 @@ class MyApp extends StatelessWidget {
               name: AppRoutes.esignCreate,
               page: () => const SignCreateScreen(),
             ),
-            GetPage(
-              name: AppRoutes.trash,
-              page: () => const TrashScreen(),
-            ),
-            GetPage(
-              name: AppRoutes.simpleScannerType,
-              page: () => const SimpleScannerTypeScreen(),
-            ),
-            GetPage(
-              name: AppRoutes.simpleScannerCamera,
-              page: () {
-                final arguments = Get.arguments as Map<String, dynamic>?;
-                return SimpleScannerCameraScreen(
-                  scanType: arguments!['scanType'] as ScanType,
-                );
-              },
-            ),
-            GetPage(
-              name: AppRoutes.simpleScannerEditor,
-              page: () {
-                final arguments = Get.arguments as Map<String, dynamic>?;
-                return SimpleScannerEditorScreen(
-                  images: (arguments!['images'] as List)
-                      .map((e) => e as File)
-                      .toList(),
-                  scanType: arguments['scanType'] as ScanType,
-                );
-              },
-            ),
-            GetPage(
-              name: AppRoutes.aiScannerCamera,
-              page: () => const AIScannerCameraScreen(),
-            ),
-            GetPage(
-              name: AppRoutes.aiScannerEditor,
-              page: () {
-                final arguments = Get.arguments as Map<String, dynamic>?;
-                return AIScannerEditorScreen(
-                  images: (arguments!['images'] as List)
-                      .map((e) => e as File)
-                      .toList(),
-                );
-              },
-            ),
+            GetPage(name: AppRoutes.trash, page: () => const TrashScreen()),
             GetPage(
               name: AppRoutes.favorites,
               page: () => const FavoritesScreen(),

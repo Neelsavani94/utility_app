@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 
 import '../Controller/onboarding_controller.dart';
 import '../Routes/navigation_service.dart';
+import '../Widget/app_logo.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -94,60 +95,24 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Minimal Logo Design
+                      // Logo Image
                       Container(
-                        width: 120,
-                        height: 120,
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(28),
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              colorScheme.primary,
-                              colorScheme.secondary,
-                            ],
-                          ),
+                          borderRadius: BorderRadius.circular(20),
                           boxShadow: [
                             BoxShadow(
                               color: isDark
-                                  ? colorScheme.primary.withOpacity(0.3)
-                                  : colorScheme.primary.withOpacity(0.2),
-                              blurRadius: isDark ? 40 : 30,
-                              offset: const Offset(0, 12),
-                              spreadRadius: isDark ? 2 : 0,
+                                  ? Colors.black.withOpacity(0.3)
+                                  : Colors.black.withOpacity(0.1),
+                              blurRadius: 20,
+                              offset: const Offset(0, 8),
                             ),
                           ],
                         ),
-                        child: Icon(
-                          Icons.code_rounded,
-                          size: 64,
-                          color: Colors.white,
-                        ),
-                      ),
-
-                      const SizedBox(height: 40),
-
-                      // App Name - Minimal Typography
-                      Text(
-                        'Scanify',
-                        style: TextStyle(
-                          fontSize: 44,
-                          fontWeight: FontWeight.w800,
-                          color: colorScheme.onBackground,
-                          letterSpacing: -1.2,
-                        ),
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      Text(
-                        'AI-Powered Coding Assistant',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w400,
-                          color: colorScheme.onBackground.withOpacity(0.5),
-                          letterSpacing: 0.3,
+                        child: const AppLogo(
+                          width: 140,
+                          height: 140,
+                          borderRadius: 20,
                         ),
                       ),
                     ],

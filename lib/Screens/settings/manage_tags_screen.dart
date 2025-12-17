@@ -161,18 +161,16 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
                 return;
               }
 
-              // Check for duplicate tag names
-              final existingTag = _tags.firstWhere(
-                (tag) => tag.title.toLowerCase() == tagName.toLowerCase(),
-                orElse: () => Tag(title: ''),
-              );
-              
-              if (existingTag.title.isNotEmpty) {
-                _showToast('Tag "$tagName" already exists', isWarning: true);
-                return;
-              }
-
               try {
+                // Check for duplicate tag names in database
+                final tagExists = await _db.tagExists(tagName);
+                if (tagExists) {
+                  if (mounted) {
+                    _showToast('Tag "$tagName" already exists', isWarning: true);
+                  }
+                  return;
+                }
+
                 final tag = Tag(title: tagName);
                 await _db.insertTag(tag);
                 
@@ -185,7 +183,8 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
                 }
               } catch (e) {
                 if (mounted) {
-                  _showToast('Error adding tag: $e', isError: true);
+                  final errorMsg = e.toString().replaceAll('Exception: ', '');
+                  _showToast(errorMsg.isNotEmpty ? errorMsg : 'Error adding tag', isError: true);
                 }
               }
             },
@@ -265,7 +264,7 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
                     // Reload tags from database
                     await _loadTags();
                     
-                    _showToast('Tag "$tagName" deleted successfully', isError: true);
+                    _showToast('Tag "$tagName" deleted successfully');
                   } else {
                     _showToast('Failed to delete tag', isError: true);
                   }
@@ -273,7 +272,8 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
               } catch (e) {
                 Navigator.pop(context);
                 if (mounted) {
-                  _showToast('Error: ${e.toString()}', isError: true);
+                  final errorMsg = e.toString().replaceAll('Exception: ', '');
+                  _showToast(errorMsg.isNotEmpty ? errorMsg : 'Error deleting tag', isError: true);
                 }
               }
             },
@@ -765,21 +765,19 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
                 return;
               }
 
-              // Check for duplicate tag names (excluding current tag)
-              final existingTag = _tags.firstWhere(
-                (t) => t.id != tag.id && 
-                       t.title.toLowerCase() == newTagName.toLowerCase(),
-                orElse: () => Tag(title: ''),
-              );
-              
-              if (existingTag.title.isNotEmpty) {
-                _showToast('Tag "$newTagName" already exists', isWarning: true);
-                return;
-              }
-
               try {
+                // Check for duplicate tag names in database (excluding current tag)
+                final existingTag = await _db.getTagByName(newTagName);
+                if (existingTag != null && existingTag.id != tag.id) {
+                  if (mounted) {
+                    _showToast('Tag "$newTagName" already exists', isWarning: true);
+                  }
+                  return;
+                }
+
                 final updatedTag = tag.copyWith(
                   title: newTagName,
+                  updatedAt: DateTime.now(),
                 );
                 final rowsAffected = await _db.updateTag(updatedTag);
                 
@@ -797,7 +795,8 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
                 }
               } catch (e) {
                 if (mounted) {
-                  _showToast('Error: $e', isError: true);
+                  final errorMsg = e.toString().replaceAll('Exception: ', '');
+                  _showToast(errorMsg.isNotEmpty ? errorMsg : 'Error updating tag', isError: true);
                 }
               }
             },

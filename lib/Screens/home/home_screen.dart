@@ -1,7 +1,9 @@
+import 'dart:developer';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:share_plus/share_plus.dart';
@@ -9,6 +11,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:simple_barcode_scanner/simple_barcode_scanner.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../Constants/app_constants.dart';
 import '../../Providers/home_provider.dart';
 import '../../Components/empty_state.dart';
@@ -17,8 +22,13 @@ import '../../Routes/navigation_service.dart';
 import '../../Services/database_helper.dart';
 import '../../Models/tag_model.dart';
 import '../../Models/document_model.dart';
+import '../../Services/document_scan_serivce.dart';
+import '../../Services/clipboard_service.dart';
+import '../../Services/file_storage_service.dart';
+import '../../Services/photo_editor_service.dart';
+import '../../Widget/app_logo.dart';
 import '../settings/settings_screen.dart';
-import '../scanner/scanner_mode_bottom_sheet.dart';
+import 'document_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -36,6 +46,18 @@ class _HomeScreenState extends State<HomeScreen>
   final DatabaseHelper _db = DatabaseHelper.instance;
   List<Tag> _tags = [];
   bool _isLoadingTags = true;
+  int _previousBottomNavIndex = 0;
+  final documentScanner = DocumentScanner(
+    options: DocumentScannerOptions(
+      documentFormat: DocumentFormat.jpeg,
+      mode: ScannerMode.filter,
+      pageLimit: 1,
+      isGalleryImport: true,
+    ),
+  );
+  final scanService = DocumentScanService();
+  final clipboardService = ClipboardService.instance;
+  final fileStorageService = FileStorageService.instance;
 
   @override
   void initState() {
@@ -57,6 +79,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _loadTags() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoadingTags = true;
+    });
+
     try {
       final tags = await _db.getAllTags();
       if (mounted) {
@@ -66,10 +94,19 @@ class _HomeScreenState extends State<HomeScreen>
         });
       }
     } catch (e) {
+      log('Error loading tags: $e');
       if (mounted) {
         setState(() {
           _isLoadingTags = false;
         });
+        // Show error toast
+        Fluttertoast.showToast(
+          msg: 'Error loading tags: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
       }
     }
   }
@@ -89,150 +126,175 @@ class _HomeScreenState extends State<HomeScreen>
 
     return Consumer<HomeProvider>(
       builder: (context, provider, child) {
-        return Scaffold(
-          resizeToAvoidBottomInset: false,
-          backgroundColor: colorScheme.background,
-          appBar: _buildAppBar(
-            context,
-            colorScheme,
-            isDark,
-            provider,
-            provider.selectedBottomNavIndex == 4
-                ? Text(
-                    'Setting',
-                    style: TextStyle(
-                      color: colorScheme.secondary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                    ),
-                  )
-                : RichText(
-                    text: TextSpan(
-                      children: [
-                        TextSpan(
-                          text: 'Scanify',
-                          style: TextStyle(
-                            color: colorScheme.secondary,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                        TextSpan(
-                          text: 'AI',
-                          style: TextStyle(
-                            color: colorScheme.onBackground,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-          ),
-          body: Builder(
-            builder: (context) {
-              // Show SettingsScreen when settings icon (index 4) is selected
-              if (provider.selectedBottomNavIndex == 4) {
-                return const SettingsScreen();
-              }
+        // Refresh tags when bottom nav changes from settings (index 4) to home
+        final currentIndex = provider.selectedBottomNavIndex;
+        if (_previousBottomNavIndex == 4 && currentIndex != 4) {
+          // Refresh tags when returning from settings
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _loadTags();
+            }
+          });
+        }
+        _previousBottomNavIndex = currentIndex;
 
-              // Default home content
-              return SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Content Section
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppConstants.spacingM,
-                        AppConstants.spacingM,
-                        AppConstants.spacingM,
-                        100,
+        return PopScope(
+          onPopInvokedWithResult: (bool didPop, dynamic result) {
+            // Refresh tags when returning to this screen
+            if (!didPop) {
+              _loadTags();
+            }
+          },
+          child: Scaffold(
+            resizeToAvoidBottomInset: false,
+            backgroundColor: colorScheme.background,
+            appBar: _buildAppBar(
+              context,
+              colorScheme,
+              isDark,
+              provider,
+              provider.selectedBottomNavIndex == 4
+                  ? Text(
+                      'Setting',
+                      style: TextStyle(
+                        color: colorScheme.secondary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5,
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    )
+                  : RichText(
+                      text: TextSpan(
                         children: [
-                          // Quick Tools Grid
-                          FadeTransition(
-                            opacity: _fadeAnimation,
-                            child: _buildToolsGrid(context, provider),
-                          ),
-                          const SizedBox(height: AppConstants.spacingXS),
-                          _buildSearchBar(
-                            context,
-                            colorScheme,
-                            isDark,
-                            provider,
-                          ),
-                          // Category Filter Row
-                          FadeTransition(
-                            opacity: _fadeAnimation,
-                            child: _buildCategoryFilter(
-                              context,
-                              provider,
-                              colorScheme,
-                              isDark,
+                          TextSpan(
+                            text: 'Scanify',
+                            style: TextStyle(
+                              color: colorScheme.secondary,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.5,
                             ),
                           ),
-
-                          const SizedBox(height: AppConstants.spacingM),
-
-                          // Documents Grid or Empty State
-                          provider.isLoading
-                              ? SizedBox(
-                                  height:
-                                      MediaQuery.of(context).size.height * 0.3,
-                                  child: Center(
-                                    child: CircularProgressIndicator(
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        colorScheme.primary,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                              : provider.filteredDocuments.isEmpty
-                              ? SizedBox(
-                                  height:
-                                      MediaQuery.of(context).size.height * 0.3,
-                                  child: const EmptyState(
-                                    title: 'Start Scanning!',
-                                    subtitle: 'We don\'t see any files',
-                                    icon: Icons.document_scanner_rounded,
-                                  ),
-                                )
-                              : _buildDocumentsGrid(context, provider),
+                          TextSpan(
+                            text: 'AI',
+                            style: TextStyle(
+                              color: colorScheme.onBackground,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              );
-            },
-          ),
-          floatingActionButton: _buildFloatingActionButton(
-            context,
-            colorScheme,
-            isDark,
-          ),
-          floatingActionButtonLocation:
-              FloatingActionButtonLocation.centerDocked,
-          bottomNavigationBar: BottomNavigationBarCustom(
-            selectedIndex: provider.selectedBottomNavIndex,
-            onItemSelected: (index) {
-              // Handle QR Scan navigation (index 1)
-              if (index == 1) {
-                NavigationService.toQRReader();
-              } else if (index == 3) {
-                // Handle OCR Scan (index 3) - navigate to ExtractTextScreen and auto-trigger image picker
-                NavigationService.toExtractText(autoPickImage: true);
-              } else {
-                // For other items, update the selected index
-                provider.setSelectedBottomNavIndex(index);
-              }
-            },
+            ),
+            body: Builder(
+              builder: (context) {
+                // Show SettingsScreen when settings icon (index 4) is selected
+                if (provider.selectedBottomNavIndex == 4) {
+                  return const SettingsScreen();
+                }
+
+                // Default home content
+                return SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Content Section
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppConstants.spacingM,
+                          AppConstants.spacingM,
+                          AppConstants.spacingM,
+                          100,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Quick Tools Grid (conditional)
+                            if (SettingsScreen.getShowToolsOnHome())
+                              FadeTransition(
+                                opacity: _fadeAnimation,
+                                child: _buildToolsGrid(context, provider),
+                              ),
+                            if (SettingsScreen.getShowToolsOnHome())
+                              const SizedBox(height: AppConstants.spacingXS),
+                            _buildSearchBar(
+                              context,
+                              colorScheme,
+                              isDark,
+                              provider,
+                            ),
+                            // Category Filter Row
+                            FadeTransition(
+                              opacity: _fadeAnimation,
+                              child: _buildCategoryFilter(
+                                context,
+                                provider,
+                                colorScheme,
+                                isDark,
+                              ),
+                            ),
+
+                            const SizedBox(height: AppConstants.spacingM),
+
+                            // Documents Grid or Empty State
+                            provider.isLoading
+                                ? SizedBox(
+                                    height:
+                                        MediaQuery.of(context).size.height *
+                                        0.3,
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              colorScheme.primary,
+                                            ),
+                                      ),
+                                    ),
+                                  )
+                                : provider.filteredDocuments.isEmpty
+                                ? SizedBox(
+                                    height:
+                                        MediaQuery.of(context).size.height *
+                                        0.3,
+                                    child: const EmptyState(
+                                      title: 'Start Scanning!',
+                                      subtitle: 'We don\'t see any files',
+                                      icon: Icons.document_scanner_rounded,
+                                    ),
+                                  )
+                                : _buildDocumentsGrid(context, provider),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            floatingActionButton: _buildFloatingActionButton(
+              context,
+              colorScheme,
+              isDark,
+            ),
+            floatingActionButtonLocation:
+                FloatingActionButtonLocation.centerDocked,
+            bottomNavigationBar: BottomNavigationBarCustom(
+              selectedIndex: provider.selectedBottomNavIndex,
+              onItemSelected: (index) async {
+                // Handle QR Scan navigation (index 1) - open scanner directly
+                if (index == 1) {
+                  await _handleQRScan(context, colorScheme);
+                } else if (index == 3) {
+                  // Handle OCR Scan (index 3) - pick image first, then navigate
+                  await _handleOCRScan(context, colorScheme);
+                } else {
+                  // For other items, update the selected index
+                  provider.setSelectedBottomNavIndex(index);
+                }
+              },
+            ),
           ),
         );
       },
@@ -271,30 +333,8 @@ class _HomeScreenState extends State<HomeScreen>
         padding: const EdgeInsets.only(left: AppConstants.spacingM),
         child: Row(
           children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [colorScheme.primary, colorScheme.secondary],
-                ),
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: [
-                  BoxShadow(
-                    color: colorScheme.primary.withOpacity(0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Icon(
-                Icons.description_rounded,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
+            // Logo Image
+            const AppLogo(width: 40, height: 40, borderRadius: 10),
             const SizedBox(width: AppConstants.spacingS),
             title,
           ],
@@ -584,18 +624,12 @@ class _HomeScreenState extends State<HomeScreen>
         return;
       }
 
-      if (files.length < 2) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Please select at least 2 images to merge PDF'),
-            backgroundColor: colorScheme.error,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-        return;
-      }
-
-      NavigationService.toPhotoEditor(imageFiles: files);
+      // Open ProImageEditor directly for first image
+      final photoEditorService = PhotoEditorService.instance;
+      await photoEditorService.openEditorForMultipleAndSave(
+        context: context,
+        imageFiles: files,
+      );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -789,43 +823,51 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildDocumentCard(
     BuildContext context,
-    dynamic document,
+    DocumentModel document,
     HomeProvider provider,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return GestureDetector(
-      onTap: () => _handleDocumentTap(context, document),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DocumentDetailScreen(
+            document: Document(
+              title: document.name,
+              type: document.category,
+              imagePath: document.imagePath ?? "",
+              thumbnailPath: document.thumbnailPath,
+              id: int.parse(document.id),
+              isFavourite: document.isFavorite,
+              isDeleted: document.isDeleted,
+              createdAt: document.createdAt,
+              deletedAt: document.deletedAt,
+            ),
+          ),
+        ),
+      ),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        margin: const EdgeInsets.only(bottom: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: isDark ? colorScheme.surface.withOpacity(0.6) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          color: isDark ? colorScheme.surface : Colors.white,
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: isDark
-                ? colorScheme.outline.withOpacity(0.12)
+                ? colorScheme.outline.withOpacity(0.1)
                 : colorScheme.outline.withOpacity(0.08),
-            width: 1,
+            width: 0.5,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: isDark
-                  ? Colors.black.withOpacity(0.15)
-                  : Colors.black.withOpacity(0.03),
-              blurRadius: 6,
-              offset: const Offset(0, 1),
-            ),
-          ],
         ),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Thumbnail or Icon with subtle gradient
-            _buildDocumentThumbnail(document, colorScheme, 52),
-            const SizedBox(width: 14),
-            // Content - Compact Vertical
+            // Thumbnail on the left
+            _buildDocumentThumbnail(document, colorScheme, 56, isDark),
+            const SizedBox(width: 12),
+            // Content - Title, Date, Location
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -839,47 +881,43 @@ class _HomeScreenState extends State<HomeScreen>
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                       height: 1.3,
+                      letterSpacing: -0.2,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colorScheme.primary.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: Text(
-                      document.category,
-                      style: TextStyle(
-                        color: colorScheme.primary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                  // Date/Time
+                  Text(
+                    document.formattedDate,
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withOpacity(0.6),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      height: 1.2,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  // Time and Category in one line
+                  const SizedBox(height: 4),
+                  // Location with phone icon
                   Row(
                     children: [
                       Icon(
-                        Icons.access_time_rounded,
+                        Icons.phone_android_rounded,
                         size: 12,
-                        color: colorScheme.onSurface.withOpacity(0.45),
+                        color: colorScheme.primary,
                       ),
                       const SizedBox(width: 4),
-                      Text(
-                        document.formattedDate,
-                        style: TextStyle(
-                          color: colorScheme.onSurface.withOpacity(0.55),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w400,
+                      Flexible(
+                        child: Text(
+                          'In this device',
+                          style: TextStyle(
+                            color: colorScheme.onSurface.withOpacity(0.6),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w400,
+                            height: 1.2,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -887,89 +925,113 @@ class _HomeScreenState extends State<HomeScreen>
                 ],
               ),
             ),
-            const SizedBox(width: 10),
-            // Actions - Compact
-            Row(
+            const SizedBox(width: 8),
+            // Right side actions: Tag Button, then Share, Star, More in row
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Favorite
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () async {
-                      await provider.toggleFavorite(document.id);
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: document.isFavorite
-                            ? Colors.amber.withOpacity(0.12)
-                            : colorScheme.surface.withOpacity(0.6),
-                        borderRadius: BorderRadius.circular(8),
+                // Tag button (showing category) - at top
+                InkWell(
+                  onTap: () {
+                    provider.setSelectedCategory(document.category);
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? colorScheme.primaryContainer.withOpacity(0.3)
+                          : colorScheme.primaryContainer.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: colorScheme.primary.withOpacity(0.2),
+                        width: 0.5,
                       ),
-                      child: Icon(
-                        document.isFavorite
-                            ? Icons.bookmark_rounded
-                            : Icons.bookmark_outline_rounded,
-                        size: 18,
-                        color: document.isFavorite
-                            ? Colors.amber.shade700
-                            : colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                    child: Text(
+                      document.category,
+                      style: TextStyle(
+                        color: colorScheme.primary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.1,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),
-                // Share
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () => _handleShareDocument(context, document),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: colorScheme.surface.withOpacity(0.6),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
+                const SizedBox(height: 8),
+                // Share, Star, More icons in a row
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Share icon
+                    IconButton(
+                      onPressed: () => _handleShareDocument(context, document),
+                      icon: Icon(
                         Icons.share_rounded,
                         size: 18,
-                        color: colorScheme.onSurface.withOpacity(0.5),
+                        color: colorScheme.onSurface.withOpacity(0.7),
                       ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 25,
+                        minHeight: 25,
+                      ),
+                      tooltip: 'Share',
                     ),
-                  ),
-                ),
-                // More
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () {
-                      _showDocumentOptionsBottomSheet(
-                        context,
-                        document,
-                        colorScheme,
-                        isDark,
-                        provider,
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: colorScheme.surface.withOpacity(0.6),
-                        borderRadius: BorderRadius.circular(8),
+                    // Star (Favorite) icon
+                    IconButton(
+                      onPressed: () async {
+                        await provider.toggleFavorite(document.id);
+                      },
+                      icon: Icon(
+                        document.isFavorite
+                            ? Icons.star_rounded
+                            : Icons.star_outline_rounded,
+                        size: 18,
+                        color: document.isFavorite
+                            ? Colors.amber.shade600
+                            : colorScheme.onSurface.withOpacity(0.7),
                       ),
-                      child: Icon(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 25,
+                        minHeight: 25,
+                      ),
+                      tooltip: document.isFavorite
+                          ? 'Remove favorite'
+                          : 'Add favorite',
+                    ),
+                    // More options (vertical ellipsis)
+                    IconButton(
+                      onPressed: () {
+                        _showDocumentOptionsBottomSheet(
+                          context,
+                          document,
+                          colorScheme,
+                          isDark,
+                          provider,
+                        );
+                      },
+                      icon: Icon(
                         Icons.more_vert_rounded,
                         size: 18,
-                        color: colorScheme.onSurface.withOpacity(0.5),
+                        color: colorScheme.onSurface.withOpacity(0.7),
                       ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 25,
+                        minHeight: 25,
+                      ),
+                      tooltip: 'More options',
                     ),
-                  ),
+                  ],
                 ),
               ],
             ),
@@ -979,9 +1041,14 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildDocumentThumbnail(dynamic document, ColorScheme colorScheme, double size) {
+  Widget _buildDocumentThumbnail(
+    dynamic document,
+    ColorScheme colorScheme,
+    double size,
+    bool isDark,
+  ) {
     final thumbnailPath = document.thumbnailPath;
-    
+
     // If thumbnail exists and is not empty, show thumbnail
     if (thumbnailPath != null && thumbnailPath.isNotEmpty) {
       final thumbnailFile = File(thumbnailPath);
@@ -989,35 +1056,28 @@ class _HomeScreenState extends State<HomeScreen>
         width: size,
         height: size,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(8),
+          color: colorScheme.surfaceVariant.withOpacity(0.3),
           border: Border.all(
-            color: colorScheme.outline.withOpacity(0.1),
-            width: 1,
+            color: isDark
+                ? colorScheme.outline.withOpacity(0.1)
+                : colorScheme.outline.withOpacity(0.08),
+            width: 0.5,
           ),
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(8),
           child: Image.file(
             thumbnailFile,
             fit: BoxFit.cover,
             errorBuilder: (context, error, stackTrace) {
               // Fallback to icon if thumbnail fails to load
               return Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      colorScheme.primary,
-                      colorScheme.primary.withOpacity(0.8),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                color: colorScheme.surfaceVariant.withOpacity(0.3),
                 child: Icon(
                   Icons.description_rounded,
-                  color: Colors.white,
-                  size: size * 0.5,
+                  color: colorScheme.onSurface.withOpacity(0.4),
+                  size: size * 0.4,
                 ),
               );
             },
@@ -1025,60 +1085,33 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       );
     }
-    
-    // Default icon with gradient
+
+    // Default icon - minimal design
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            colorScheme.primary,
-            colorScheme.primary.withOpacity(0.8),
-          ],
+        color: colorScheme.surfaceVariant.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isDark
+              ? colorScheme.outline.withOpacity(0.1)
+              : colorScheme.outline.withOpacity(0.08),
+          width: 0.5,
         ),
-        borderRadius: BorderRadius.circular(12),
       ),
       child: Icon(
         Icons.description_rounded,
-        color: Colors.white,
-        size: size * 0.5,
+        color: colorScheme.onSurface.withOpacity(0.4),
+        size: size * 0.4,
       ),
     );
   }
 
-  void _handleDocumentTap(BuildContext context, dynamic document) {
-    final filePath = document.imagePath ?? document.thumbnailPath;
-    if (filePath == null || filePath.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('File path not available'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
-      return;
-    }
-
-    final category = document.category?.toLowerCase() ?? '';
-    final isPDF = category == 'pdf' || 
-                  filePath.toLowerCase().endsWith('.pdf') ||
-                  document.name.toLowerCase().endsWith('.pdf');
-
-    if (isPDF) {
-      // Navigate to PDF viewer
-      NavigationService.toScanPDFViewer(pdfPath: filePath);
-    } else {
-      // Navigate to image viewer
-      NavigationService.toImageViewer(
-        imagePath: filePath,
-        imageName: document.name,
-      );
-    }
-  }
-
-  Future<void> _handleShareDocument(BuildContext context, dynamic document) async {
+  Future<void> _handleShareDocument(
+    BuildContext context,
+    dynamic document,
+  ) async {
     // Check if it's a folder
     final category = document.category?.toLowerCase() ?? '';
     if (category == 'folder') {
@@ -1117,18 +1150,219 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     try {
-      final isPDF = category == 'pdf' || 
-                    filePath.toLowerCase().endsWith('.pdf') ||
-                    document.name.toLowerCase().endsWith('.pdf');
+      final isPDF =
+          category == 'pdf' ||
+          filePath.toLowerCase().endsWith('.pdf') ||
+          document.name.toLowerCase().endsWith('.pdf');
 
-      await Share.shareXFiles(
-        [XFile(filePath)],
-        text: isPDF ? 'PDF Document' : 'Image',
-      );
+      await Share.shareXFiles([
+        XFile(filePath),
+      ], text: isPDF ? 'PDF Document' : 'Image');
     } catch (e) {
       if (context.mounted) {
         Fluttertoast.showToast(
           msg: 'Error sharing file: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
+  }
+
+  void _showScannerOptionsDialog(
+    BuildContext context,
+    ColorScheme colorScheme,
+    bool isDark,
+  ) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark
+                ? colorScheme.surface.withOpacity(0.98)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Choose Scanner Type',
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                _buildScannerOption(
+                  context: context,
+                  colorScheme: colorScheme,
+                  title: 'AI Scanner',
+                  icon: Icons.auto_awesome,
+                  description: 'Advanced AI-powered scanning',
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _scanWithAIScanner();
+                  },
+                ),
+                const SizedBox(height: 12),
+                _buildScannerOption(
+                  context: context,
+                  colorScheme: colorScheme,
+                  title: 'Simple Scanner',
+                  icon: Icons.document_scanner,
+                  description: 'Quick and simple scanning',
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _scanWithSimpleScanner();
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withOpacity(0.6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScannerOption({
+    required BuildContext context,
+    required ColorScheme colorScheme,
+    required String title,
+    required IconData icon,
+    required String description,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colorScheme.outline.withOpacity(0.2)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colorScheme.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: colorScheme.primary, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_ios,
+              color: colorScheme.onSurface.withOpacity(0.4),
+              size: 16,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _scanWithAIScanner() async {
+    try {
+      // AI Scanner with full mode for advanced scanning
+      final aiScanner = DocumentScanner(
+        options: DocumentScannerOptions(
+          documentFormat: DocumentFormat.jpeg,
+          mode: ScannerMode.full,
+          pageLimit: 1,
+          isGalleryImport: true,
+        ),
+      );
+
+      DocumentScanningResult result = await aiScanner.scanDocument();
+      log(result.images.toString());
+      await scanService.scanAndSaveDocument(result: result);
+    } catch (e) {
+      log('Error in AI Scanner: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error scanning document: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
+  }
+
+  Future<void> _scanWithSimpleScanner() async {
+    try {
+      // Simple Document Scanner with filter mode
+      final simpleScanner = DocumentScanner(
+        options: DocumentScannerOptions(
+          documentFormat: DocumentFormat.jpeg,
+          mode: ScannerMode.filter,
+          pageLimit: 1,
+          isGalleryImport: true,
+        ),
+      );
+
+      DocumentScanningResult result = await simpleScanner.scanDocument();
+      log(result.images.toString());
+      await scanService.scanAndSaveDocument(result: result);
+    } catch (e) {
+      log('Error in Simple Scanner: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error scanning document: $e',
           toastLength: Toast.LENGTH_SHORT,
           gravity: ToastGravity.BOTTOM,
           backgroundColor: Colors.red,
@@ -1166,7 +1400,7 @@ class _HomeScreenState extends State<HomeScreen>
         color: Colors.transparent,
         child: InkWell(
           onTap: () {
-            _showScannerModeBottomSheet(context);
+            _showScannerOptionsDialog(context, colorScheme, isDark);
           },
           borderRadius: BorderRadius.circular(32),
           child: const Icon(
@@ -1432,13 +1666,9 @@ class _HomeScreenState extends State<HomeScreen>
                 return;
               }
 
-              // Check for duplicate tag names
-              final existingTag = _tags.firstWhere(
-                (tag) => tag.title.toLowerCase() == tagName.toLowerCase(),
-                orElse: () => Tag(title: ''),
-              );
-
-              if (existingTag.title.isNotEmpty) {
+              // Check for duplicate tag names in database
+              final tagExists = await _db.tagExists(tagName);
+              if (tagExists) {
                 Fluttertoast.showToast(
                   msg: 'Tag "$tagName" already exists',
                   toastLength: Toast.LENGTH_SHORT,
@@ -1501,10 +1731,26 @@ class _HomeScreenState extends State<HomeScreen>
     HomeProvider provider,
   ) {
     final sortOptions = [
-      {'label': 'Name (A-Z)', 'value': 'name_asc', 'icon': Icons.sort_by_alpha_rounded},
-      {'label': 'Name (Z-A)', 'value': 'name_desc', 'icon': Icons.sort_by_alpha_rounded},
-      {'label': 'Date (Newest)', 'value': 'date_desc', 'icon': Icons.access_time_rounded},
-      {'label': 'Date (Oldest)', 'value': 'date_asc', 'icon': Icons.access_time_rounded},
+      {
+        'label': 'Name (A-Z)',
+        'value': 'name_asc',
+        'icon': Icons.sort_by_alpha_rounded,
+      },
+      {
+        'label': 'Name (Z-A)',
+        'value': 'name_desc',
+        'icon': Icons.sort_by_alpha_rounded,
+      },
+      {
+        'label': 'Date (Newest)',
+        'value': 'date_desc',
+        'icon': Icons.access_time_rounded,
+      },
+      {
+        'label': 'Date (Oldest)',
+        'value': 'date_asc',
+        'icon': Icons.access_time_rounded,
+      },
     ];
 
     showDialog(
@@ -1529,13 +1775,17 @@ class _HomeScreenState extends State<HomeScreen>
             return ListTile(
               leading: Icon(
                 option['icon'] as IconData,
-                color: isSelected ? colorScheme.primary : colorScheme.onSurface.withOpacity(0.6),
+                color: isSelected
+                    ? colorScheme.primary
+                    : colorScheme.onSurface.withOpacity(0.6),
                 size: 20,
               ),
               title: Text(
                 option['label'] as String,
                 style: TextStyle(
-                  color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                  color: isSelected
+                      ? colorScheme.primary
+                      : colorScheme.onSurface,
                   fontSize: 14,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                 ),
@@ -1581,12 +1831,18 @@ class _HomeScreenState extends State<HomeScreen>
     bool isDark,
     HomeProvider provider,
   ) {
-    final options = [
+    final options = <Map<String, dynamic>>[
       {
         'icon': Icons.drive_file_move_rounded,
         'title': 'Move',
         'color': colorScheme.primary,
       },
+      if (clipboardService.hasCopiedDocument())
+        {
+          'icon': Icons.paste_rounded,
+          'title': 'Paste',
+          'color': colorScheme.secondary,
+        },
       {
         'icon': Icons.save_rounded,
         'title': 'Save',
@@ -1929,6 +2185,9 @@ class _HomeScreenState extends State<HomeScreen>
       case 'Copy':
         _handleCopyDocument(context, document, colorScheme, provider);
         break;
+      case 'Paste':
+        _handlePasteDocument(context, document, colorScheme, provider);
+        break;
       case 'Rename':
         _handleRenameDocument(context, document, colorScheme);
         break;
@@ -1949,6 +2208,124 @@ class _HomeScreenState extends State<HomeScreen>
     HomeProvider provider,
   ) {
     _showMoveCopyPage(context, document, colorScheme, provider, 'Move');
+  }
+
+  // Paste Document Function
+  Future<void> _handlePasteDocument(
+    BuildContext context,
+    dynamic targetDocument,
+    ColorScheme colorScheme,
+    HomeProvider provider,
+  ) async {
+    if (!clipboardService.hasCopiedDocument()) {
+      Fluttertoast.showToast(
+        msg: 'No document copied',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+      return;
+    }
+
+    try {
+      final copiedDoc = clipboardService.getCopiedDocument()!;
+
+      // Get target folder (tagId) from target document
+      int? targetTagId;
+      if (targetDocument is DocumentModel) {
+        final targetDoc = await _db.getDocumentById(
+          int.parse(targetDocument.id),
+        );
+        targetTagId = targetDoc?.tagId;
+      } else if (targetDocument is Document) {
+        targetTagId = targetDocument.tagId;
+      }
+
+      // Copy the document with all its details
+      final newDocId = await _db.copyDocumentWithDetails(
+        copiedDoc.id!,
+        targetTagId,
+      );
+
+      // Copy files
+      final newDoc = await _db.getDocumentById(newDocId);
+      if (newDoc != null) {
+        // Copy main image file
+        final isPDF = newDoc.type.toLowerCase() == 'pdf';
+        final newImagePath = await fileStorageService.copyFile(
+          sourcePath: newDoc.imagePath,
+          newFileName: '${newDoc.title}_copy',
+          isPDF: isPDF,
+        );
+
+        if (newImagePath != null) {
+          // Copy thumbnail if exists
+          String? newThumbnailPath;
+          if (newDoc.thumbnailPath != null) {
+            newThumbnailPath = await fileStorageService.copyThumbnail(
+              sourceThumbnailPath: newDoc.thumbnailPath,
+              newThumbnailName: '${newDoc.title}_thumb_copy',
+            );
+          }
+
+          // Update document with new file paths
+          final updatedDoc = newDoc.copyWith(
+            imagePath: newImagePath,
+            thumbnailPath: newThumbnailPath,
+          );
+          await _db.updateDocument(updatedDoc);
+
+          // Copy all document detail files
+          final details = await _db.getDocumentDetailsByDocumentId(newDocId);
+          for (final detail in details) {
+            final newDetailImagePath = await fileStorageService.copyFile(
+              sourcePath: detail.imagePath,
+              newFileName: '${detail.title}_copy',
+              isPDF: false,
+            );
+
+            String? newDetailThumbnailPath;
+            if (detail.thumbnailPath != null) {
+              newDetailThumbnailPath = await fileStorageService.copyThumbnail(
+                sourceThumbnailPath: detail.thumbnailPath,
+                newThumbnailName: '${detail.title}_thumb_copy',
+              );
+            }
+
+            if (newDetailImagePath != null) {
+              final updatedDetail = detail.copyWith(
+                imagePath: newDetailImagePath,
+                thumbnailPath: newDetailThumbnailPath,
+              );
+              await _db.updateDocumentDetail(updatedDetail);
+            }
+          }
+        }
+      }
+
+      Fluttertoast.showToast(
+        msg: 'Document pasted successfully',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: colorScheme.primary,
+        textColor: Colors.white,
+      );
+
+      // Refresh documents
+      if (mounted) {
+        provider.loadDocuments();
+      }
+    } catch (e) {
+      log('Error pasting document: $e');
+      Fluttertoast.showToast(
+        msg: 'Error pasting document: $e',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+    }
   }
 
   // Save Document Function
@@ -2116,7 +2493,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (result != null && result is String) {
       final filePath = document.imagePath ?? document.thumbnailPath;
-      
+
       if (filePath == null || filePath.isEmpty) {
         if (context.mounted) {
           Fluttertoast.showToast(
@@ -2146,16 +2523,18 @@ class _HomeScreenState extends State<HomeScreen>
 
       try {
         // Use Share to send file via email (supports attachments)
-        final isPDF = filePath.toLowerCase().endsWith('.pdf') ||
-                     document.name.toLowerCase().endsWith('.pdf') ||
-                     (document.category?.toLowerCase() ?? '') == 'pdf';
-        
+        final isPDF =
+            filePath.toLowerCase().endsWith('.pdf') ||
+            document.name.toLowerCase().endsWith('.pdf') ||
+            (document.category?.toLowerCase() ?? '') == 'pdf';
+
         await Share.shareXFiles(
           [XFile(filePath)],
-          text: 'Please find the attached ${isPDF ? 'PDF' : 'image'}: ${document.name}',
+          text:
+              'Please find the attached ${isPDF ? 'PDF' : 'image'}: ${document.name}',
           subject: document.name,
         );
-        
+
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -2212,9 +2591,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     final colorScheme = Theme.of(context).colorScheme;
-    final isPDF = filePath.toLowerCase().endsWith('.pdf') ||
-                 document.name.toLowerCase().endsWith('.pdf') ||
-                 (document.category?.toLowerCase() ?? '') == 'pdf';
+    final isPDF =
+        filePath.toLowerCase().endsWith('.pdf') ||
+        document.name.toLowerCase().endsWith('.pdf') ||
+        (document.category?.toLowerCase() ?? '') == 'pdf';
 
     // Show processing indicator
     showDialog(
@@ -2244,7 +2624,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     try {
       String extractedText = '';
-      
+
       if (isPDF) {
         // Process PDF
         final bytes = await file.readAsBytes();
@@ -2254,7 +2634,10 @@ class _HomeScreenState extends State<HomeScreen>
         for (int i = 0; i < pageCount; i++) {
           try {
             final textExtractor = PdfTextExtractor(pdfDocument);
-            final pageText = textExtractor.extractText(startPageIndex: i, endPageIndex: i);
+            final pageText = textExtractor.extractText(
+              startPageIndex: i,
+              endPageIndex: i,
+            );
             if (pageText.isNotEmpty) {
               extractedText += 'Page ${i + 1}:\n$pageText\n\n';
             }
@@ -2278,7 +2661,7 @@ class _HomeScreenState extends State<HomeScreen>
 
       if (context.mounted) {
         Navigator.pop(context); // Close loading dialog
-        
+
         if (extractedText.isEmpty) {
           Fluttertoast.showToast(
             msg: 'No text found in document',
@@ -2349,8 +2732,52 @@ class _HomeScreenState extends State<HomeScreen>
     dynamic document,
     ColorScheme colorScheme,
     HomeProvider provider,
-  ) {
-    _showMoveCopyPage(context, document, colorScheme, provider, 'Copy');
+  ) async {
+    try {
+      // Convert DocumentModel to Document if needed
+      Document? doc;
+      if (document is DocumentModel) {
+        doc = await _db.getDocumentById(int.parse(document.id));
+      } else if (document is Document) {
+        doc = document;
+      }
+
+      if (doc == null) {
+        Fluttertoast.showToast(
+          msg: 'Document not found',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+        return;
+      }
+
+      // Store in clipboard
+      clipboardService.copyDocument(doc);
+
+      Fluttertoast.showToast(
+        msg: 'Document copied: ${doc.title}',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: colorScheme.primary,
+        textColor: Colors.white,
+      );
+
+      // Refresh UI to show paste option
+      if (mounted) {
+        provider.loadDocuments();
+      }
+    } catch (e) {
+      log('Error copying document: $e');
+      Fluttertoast.showToast(
+        msg: 'Error copying document: $e',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+    }
   }
 
   // Rename Document Function
@@ -2988,9 +3415,10 @@ class _HomeScreenState extends State<HomeScreen>
         return;
       }
 
-      final isPDF = filePath.toLowerCase().endsWith('.pdf') ||
-                   document.name.toLowerCase().endsWith('.pdf') ||
-                   (document.category?.toLowerCase() ?? '') == 'pdf';
+      final isPDF =
+          filePath.toLowerCase().endsWith('.pdf') ||
+          document.name.toLowerCase().endsWith('.pdf') ||
+          (document.category?.toLowerCase() ?? '') == 'pdf';
 
       if (isPDF) {
         // For PDF, save to downloads directory
@@ -3025,7 +3453,9 @@ class _HomeScreenState extends State<HomeScreen>
             // Android: Use external storage Pictures directory
             final externalDir = await getExternalStorageDirectory();
             if (externalDir != null) {
-              picturesDir = Directory('${externalDir.path.split('/Android')[0]}/Pictures/Scanify AI');
+              picturesDir = Directory(
+                '${externalDir.path.split('/Android')[0]}/Pictures/Scanify AI',
+              );
             }
           } else if (Platform.isIOS) {
             // iOS: Use application documents directory
@@ -3036,7 +3466,9 @@ class _HomeScreenState extends State<HomeScreen>
           if (picturesDir == null) {
             // Fallback to Downloads
             final directory = await getApplicationDocumentsDirectory();
-            picturesDir = Directory('${directory.path}/Download/Scanify AI/Pictures');
+            picturesDir = Directory(
+              '${directory.path}/Download/Scanify AI/Pictures',
+            );
           }
 
           if (!await picturesDir.exists()) {
@@ -3314,7 +3746,11 @@ class _HomeScreenState extends State<HomeScreen>
                   // Create New Tag
                   GestureDetector(
                     onTap: () async {
-                      final result = await _showCreateTagDialog(context, colorScheme, isDark);
+                      final result = await _showCreateTagDialog(
+                        context,
+                        colorScheme,
+                        isDark,
+                      );
                       if (result != null) {
                         // Reload tags after creating new tag
                         await _loadTags();
@@ -3796,22 +4232,239 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // Scanner Mode Selection
-  void _showScannerModeBottomSheet(BuildContext context) {
-    showModalBottomSheet(
+  // Handle QR Scan - Open scanner directly
+  Future<void> _handleQRScan(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) async {
+    try {
+      final String? result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const SimpleBarcodeScannerPage(),
+        ),
+      );
+
+      if (result != null &&
+          result.isNotEmpty &&
+          context.mounted &&
+          result.toString() != '-1') {
+        // Determine if it's a QR code or barcode
+        final isQRCode =
+            result.startsWith('http://') ||
+            result.startsWith('https://') ||
+            result.startsWith('www.') ||
+            result.contains('://');
+
+        final scannedType = isQRCode ? 'qrCode' : 'barcode';
+        _showQRResultPopup(context, result, scannedType, colorScheme);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error scanning: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+        );
+      }
+    }
+  }
+
+  // Show QR Scan Result Popup
+  void _showQRResultPopup(
+    BuildContext context,
+    String scannedText,
+    String scannedType,
+    ColorScheme colorScheme,
+  ) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showDialog(
       context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (bottomSheetContext) => ScannerModeBottomSheet(
-        onModeSelected: (mode) {
-          if (mode == ScannerMode.simple) {
-            NavigationService.toSimpleScannerType();
-          } else if (mode == ScannerMode.ai) {
-            NavigationService.toAIScannerCamera();
-          }
-        },
-      ),
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(AppConstants.spacingM),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 400),
+            decoration: BoxDecoration(
+              color: isDark ? colorScheme.surface : Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.all(AppConstants.spacingM),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          scannedType == 'qrCode' ? 'QR Code' : 'Barcode',
+                          style: TextStyle(
+                            color: colorScheme.primary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.close_rounded,
+                          color: colorScheme.onSurface,
+                          size: 24,
+                        ),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                ),
+                // Scanned Text
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppConstants.spacingM,
+                  ),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(AppConstants.spacingM),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? colorScheme.surface.withOpacity(0.5)
+                          : colorScheme.surfaceVariant.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: SelectableText(
+                      scannedText,
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: colorScheme.onSurface,
+                        height: 1.5,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppConstants.spacingM),
+                // Action Buttons
+                Padding(
+                  padding: const EdgeInsets.all(AppConstants.spacingM),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            final searchQuery = Uri.encodeComponent(
+                              scannedText,
+                            );
+                            final searchUrl = Uri.parse(
+                              'https://www.google.com/search?q=$searchQuery',
+                            );
+                            try {
+                              await launchUrl(
+                                searchUrl,
+                                mode: LaunchMode.externalApplication,
+                              );
+                            } catch (e) {
+                              Fluttertoast.showToast(
+                                msg: 'Could not open browser',
+                                toastLength: Toast.LENGTH_SHORT,
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.search_rounded, size: 20),
+                          label: const Text('Search'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: colorScheme.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppConstants.spacingM,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppConstants.spacingM),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            try {
+                              await Share.share(scannedText);
+                            } catch (e) {
+                              Fluttertoast.showToast(
+                                msg: 'Error sharing: $e',
+                                toastLength: Toast.LENGTH_SHORT,
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.share_rounded, size: 20),
+                          label: const Text('Share'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: colorScheme.secondary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppConstants.spacingM,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
+  // Handle OCR Scan - Pick image first, then navigate to ExtractTextScreen
+  Future<void> _handleOCRScan(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 100,
+      );
+
+      if (image != null && context.mounted) {
+        // Navigate to ExtractTextScreen with the selected image
+        NavigationService.toExtractText(imagePath: image.path);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error picking image: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+        );
+      }
+    }
+  }
 }

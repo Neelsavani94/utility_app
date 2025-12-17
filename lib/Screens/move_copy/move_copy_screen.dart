@@ -1,20 +1,27 @@
 import 'dart:io';
+import 'dart:developer';
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import '../../Constants/app_constants.dart';
 import '../../Models/document_model.dart';
 import '../../Providers/home_provider.dart';
 import '../../Routes/navigation_service.dart';
+import '../../Services/database_helper.dart';
+import '../../Services/file_storage_service.dart';
 import 'package:provider/provider.dart';
 
 class MoveCopyScreen extends StatelessWidget {
   final DocumentModel document;
   final String action; // 'Move' or 'Copy'
 
-  const MoveCopyScreen({
+  MoveCopyScreen({
     super.key,
     required this.document,
     required this.action,
   });
+
+  final _db = DatabaseHelper.instance;
+  final _fileStorageService = FileStorageService.instance;
 
   @override
   Widget build(BuildContext context) {
@@ -128,21 +135,12 @@ class MoveCopyScreen extends StatelessWidget {
                         label: action == "Move" ? 'Move here' : 'Paste here',
                         colorScheme: colorScheme,
                         isDark: isDark,
-                        onTap: () {
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '${action == 'Move' ? 'Moved' : 'Copied'} "${document.name}"',
-                              ),
-                              backgroundColor: colorScheme.primary,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                          );
-                        },
+                        onTap: () => _handleMoveCopyAction(
+                          context,
+                          document,
+                          colorScheme,
+                          provider,
+                        ),
                       ),
                     ),
                   ],
@@ -341,30 +339,132 @@ class MoveCopyScreen extends StatelessWidget {
   }
 
   void _handleDocumentTap(BuildContext context, DocumentModel document) {
-    final filePath = document.imagePath ?? document.thumbnailPath;
-    if (filePath == null || filePath.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('File path not available'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
-      return;
-    }
+    // When tapping a document, perform move/copy to that folder
+    _handleMoveCopyAction(context, document, Theme.of(context).colorScheme, Provider.of<HomeProvider>(context));
+  }
 
-    final category = document.category.toLowerCase();
-    final isPDF = category == 'pdf' || 
-                  filePath.toLowerCase().endsWith('.pdf') ||
-                  document.name.toLowerCase().endsWith('.pdf');
+  Future<void> _handleMoveCopyAction(
+    BuildContext context,
+    DocumentModel targetDocument,
+    ColorScheme colorScheme,
+    HomeProvider provider,
+  ) async {
+    try {
+      // Get source document
+      final sourceDocId = int.parse(document.id);
+      final sourceDoc = await _db.getDocumentById(sourceDocId);
+      
+      if (sourceDoc == null) {
+        Fluttertoast.showToast(
+          msg: 'Source document not found',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+        return;
+      }
 
-    if (isPDF) {
-      // Navigate to PDF viewer
-      NavigationService.toScanPDFViewer(pdfPath: filePath);
-    } else {
-      // Navigate to image viewer
-      NavigationService.toImageViewer(
-        imagePath: filePath,
-        imageName: document.name,
+      // Get target folder (tagId) from target document
+      final targetDocId = int.parse(targetDocument.id);
+      final targetDoc = await _db.getDocumentById(targetDocId);
+      final targetTagId = targetDoc?.tagId;
+
+      if (action == 'Move') {
+        // Move document to target folder
+        await _db.moveDocumentToFolder(sourceDocId, targetTagId);
+        
+        Fluttertoast.showToast(
+          msg: 'Document moved successfully',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: colorScheme.primary,
+          textColor: Colors.white,
+        );
+      } else if (action == 'Copy') {
+        // Copy document with all details
+        final newDocId = await _db.copyDocumentWithDetails(sourceDocId, targetTagId);
+        
+        // Copy files
+        final newDoc = await _db.getDocumentById(newDocId);
+        if (newDoc != null) {
+          // Copy main image file
+          final isPDF = newDoc.type.toLowerCase() == 'pdf';
+          final newImagePath = await _fileStorageService.copyFile(
+            sourcePath: newDoc.imagePath,
+            newFileName: '${newDoc.title}_copy',
+            isPDF: isPDF,
+          );
+
+          if (newImagePath != null) {
+            // Copy thumbnail if exists
+            String? newThumbnailPath;
+            if (newDoc.thumbnailPath != null) {
+              newThumbnailPath = await _fileStorageService.copyThumbnail(
+                sourceThumbnailPath: newDoc.thumbnailPath,
+                newThumbnailName: '${newDoc.title}_thumb_copy',
+              );
+            }
+
+            // Update document with new file paths
+            final updatedDoc = newDoc.copyWith(
+              imagePath: newImagePath,
+              thumbnailPath: newThumbnailPath,
+            );
+            await _db.updateDocument(updatedDoc);
+
+            // Copy all document detail files
+            final details = await _db.getDocumentDetailsByDocumentId(newDocId);
+            for (final detail in details) {
+              final newDetailImagePath = await _fileStorageService.copyFile(
+                sourcePath: detail.imagePath,
+                newFileName: '${detail.title}_copy',
+                isPDF: false,
+              );
+
+              String? newDetailThumbnailPath;
+              if (detail.thumbnailPath != null) {
+                newDetailThumbnailPath = await _fileStorageService.copyThumbnail(
+                  sourceThumbnailPath: detail.thumbnailPath,
+                  newThumbnailName: '${detail.title}_thumb_copy',
+                );
+              }
+
+              if (newDetailImagePath != null) {
+                final updatedDetail = detail.copyWith(
+                  imagePath: newDetailImagePath,
+                  thumbnailPath: newDetailThumbnailPath,
+                );
+                await _db.updateDocumentDetail(updatedDetail);
+              }
+            }
+          }
+        }
+
+        Fluttertoast.showToast(
+          msg: 'Document copied successfully',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: colorScheme.primary,
+          textColor: Colors.white,
+        );
+      }
+
+      // Refresh documents
+      provider.loadDocuments();
+      
+      // Navigate back
+      if (context.mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      log('Error in move/copy action: $e');
+      Fluttertoast.showToast(
+        msg: 'Error: $e',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
       );
     }
   }

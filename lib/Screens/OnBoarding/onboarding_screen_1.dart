@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../Widget/app_logo.dart';
 
 class OnboardingPage1 extends StatefulWidget {
   const OnboardingPage1({super.key});
@@ -88,30 +89,22 @@ class _OnboardingPage1State extends State<OnboardingPage1>
                   child: Transform.scale(
                     scale: _scaleAnimation.value,
                     child: Container(
-                      width: 160,
-                      height: 160,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(32),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [colorScheme.primary, colorScheme.secondary],
-                        ),
                         boxShadow: [
                           BoxShadow(
                             color: isDark
-                                ? colorScheme.primary.withOpacity(0.25)
-                                : colorScheme.primary.withOpacity(0.2),
-                            blurRadius: isDark ? 40 : 30,
-                            offset: const Offset(0, 16),
-                            spreadRadius: isDark ? 4 : 0,
+                                ? Colors.black.withOpacity(0.3)
+                                : Colors.black.withOpacity(0.1),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
                           ),
                         ],
                       ),
-                      child: Icon(
-                        Icons.code_rounded,
-                        size: 80,
-                        color: Colors.white,
+                      child: const AppLogo(
+                        width: 160,
+                        height: 160,
+                        borderRadius: 32,
                       ),
                     ),
                   ),

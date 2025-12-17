@@ -130,5 +130,10 @@ class AppConstants {
       'icon': Icons.text_fields_rounded,
       'color': Color(0xFF03A5C4), // Light Blue
     },
+    {
+      'label': 'Import',
+      'icon': Icons.folder_open_rounded,
+      'color': Color(0xFF4CAF50), // Green
+    },
   ];
 }
