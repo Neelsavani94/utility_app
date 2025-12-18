@@ -106,11 +106,6 @@ class AppConstants {
       'color': Color(0xFFFF9800), // Orange
     },
     {
-      'label': 'Image to PDF',
-      'icon': Icons.image_rounded,
-      'color': Color(0xFFFF5722), // Orange
-    },
-    {
       'label': 'Scan PDF',
       'icon': Icons.document_scanner_rounded,
       'color': Color(0xFF03A9F4), // Light Blue

@@ -996,10 +996,10 @@
             </list>
           </value>
         </entry>
-        <entry key="watermark_kit">
+        <entry key="watermark_unique">
           <value>
             <list>
-              <option value="$USER_HOME$/.pub-cache/hosted/pub.dev/watermark_kit-2.1.1/lib" />
+              <option value="$USER_HOME$/.pub-cache/hosted/pub.dev/watermark_unique-1.1.0/lib" />
             </list>
           </value>
         </entry>
@@ -1179,7 +1179,7 @@
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/vector_graphics_compiler-1.1.19/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/vector_math-2.1.4/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/vm_service-15.0.0/lib" />
-      <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/watermark_kit-2.1.1/lib" />
+      <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/watermark_unique-1.1.0/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/web-1.1.1/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/webview_windows-0.4.0/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/win32-5.15.0/lib" />

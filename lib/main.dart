@@ -28,12 +28,12 @@ import 'modules/split_pdf/split_pdf_images_list_screen.dart';
 import 'modules/split_pdf/split_pdf_page_editor_screen.dart';
 import 'modules/split_pdf/models/pdf_page_image.dart';
 import 'dart:typed_data';
-import 'modules/image_to_pdf/image_to_pdf_screen.dart';
 import 'modules/compress/compress_screen.dart';
 import 'modules/watermark/watermark_screen.dart';
 import 'Screens/trash/trash_screen.dart';
 import 'Screens/favorites/favorites_screen.dart';
 import 'Screens/image_viewer/image_viewer_screen.dart';
+import 'Screens/import_files/import_files_screen.dart';
 import 'dart:io';
 import 'Theme/theme.dart';
 import 'Services/database_helper.dart';
@@ -180,10 +180,6 @@ class MyApp extends StatelessWidget {
               },
             ),
             GetPage(
-              name: AppRoutes.imageToPDF,
-              page: () => const ImageToPdfScreen(),
-            ),
-            GetPage(
               name: AppRoutes.compress,
               page: () => const CompressScreen(),
             ),
@@ -211,6 +207,18 @@ class MyApp extends StatelessWidget {
                 return ImageViewerScreen(
                   imagePath: arguments!['imagePath'] as String,
                   imageName: arguments['imageName'] as String?,
+                );
+              },
+            ),
+            GetPage(
+              name: AppRoutes.importFiles,
+              page: () {
+                final arguments = Get.arguments as Map<String, dynamic>?;
+                final forExtractText = arguments?['forExtractText'] as bool? ?? false;
+                final forWatermark = arguments?['forWatermark'] as bool? ?? false;
+                return ImportFilesScreen(
+                  forExtractText: forExtractText,
+                  forWatermark: forWatermark,
                 );
               },
             ),

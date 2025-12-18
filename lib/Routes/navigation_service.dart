@@ -161,10 +161,6 @@ class NavigationService {
     );
   }
 
-  static Future<dynamic>? toImageToPDF() {
-    return navigateTo(AppRoutes.imageToPDF);
-  }
-
   static Future<dynamic>? toCompress() {
     return navigateTo(AppRoutes.compress);
   }
@@ -225,6 +221,19 @@ class NavigationService {
       arguments: {
         'imagePath': imagePath,
         'imageName': imageName,
+      },
+    );
+  }
+
+  static Future<dynamic>? toImportFiles({
+    bool forExtractText = false,
+    bool forWatermark = false,
+  }) {
+    return navigateTo(
+      AppRoutes.importFiles,
+      arguments: {
+        'forExtractText': forExtractText,
+        'forWatermark': forWatermark,
       },
     );
   }

@@ -18,8 +18,9 @@ class DatabaseHelper {
 
   // Constants matching Kotlin code
   static const String _databaseName = 'DocumentDB';
-  static const int _databaseVersion = 1;
+  static const int _databaseVersion = 2; // Incremented to add Documents table
   static const String _tableAllDocs = 'alldocs';
+  static const String _tableDocuments = 'Documents'; // New table for individual documents
   static const String _binFolder = 'bin123trash679abcsdcdfsd';
 
   // Column names
@@ -98,6 +99,23 @@ class DatabaseHelper {
         $_keyBiometric TEXT
       )
     ''');
+
+    // Create Documents table for individual documents (new structure)
+    await db.execute('''
+      CREATE TABLE $_tableDocuments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        type TEXT NOT NULL,
+        isFavourite INTEGER NOT NULL DEFAULT 0,
+        imagePath TEXT NOT NULL,
+        thumbnailPath TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        tag_id INTEGER,
+        isDeleted INTEGER NOT NULL DEFAULT 0,
+        deleted_at TEXT
+      )
+    ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -142,6 +160,28 @@ class DatabaseHelper {
         }
       } catch (e) {
         log('Error creating Tags table: $e');
+      }
+
+      // Add Documents table for new structure
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS $_tableDocuments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            type TEXT NOT NULL,
+            isFavourite INTEGER NOT NULL DEFAULT 0,
+            imagePath TEXT NOT NULL,
+            thumbnailPath TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            tag_id INTEGER,
+            isDeleted INTEGER NOT NULL DEFAULT 0,
+            deleted_at TEXT
+          )
+        ''');
+        log('Documents table created successfully');
+      } catch (e) {
+        log('Error creating Documents table: $e');
       }
     }
     
@@ -633,93 +673,133 @@ class DatabaseHelper {
 
   /// Insert document (converts to group structure)
   Future<int> insertDocument(Document document) async {
-    // Use document title as group name
-    final groupName = document.title;
-    final date = document.createdAt.toString();
-    
-    // Create group if not exists
-    if (!await isGroupNameExist(groupName)) {
-      await createDocTable(groupName);
-      await addGroup(
-        groupName: groupName,
-        groupDate: date,
-        groupTag: document.tagId?.toString(),
-        groupFirstImg: document.imagePath,
+    try {
+      final db = await database;
+      
+      // Insert into Documents table (new structure)
+      final result = await db.insert(
+        _tableDocuments,
+        document.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      
+      log('Document inserted with ID: $result');
+      return result;
+    } catch (e) {
+      log('Error inserting document: $e');
+      rethrow;
     }
-
-    // Add document to group table
-    return await addGroupDoc(
-      groupName: groupName,
-      imgPath: document.imagePath,
-      imgName: document.title,
-      imgNote: '',
-    );
   }
 
-  /// Get all documents (converts from group structure)
+  /// Get all documents from Documents table
   Future<List<Document>> getAllDocuments() async {
-    final groups = await getAllGroups();
-    final List<Document> documents = [];
+    try {
+      final db = await database;
+      
+      // Query from new Documents table
+      final List<Map<String, dynamic>> maps = await db.query(
+        _tableDocuments,
+        where: 'isDeleted = ?',
+        whereArgs: [0], // Only get non-deleted documents
+        orderBy: 'created_at DESC',
+      );
 
-    for (final group in groups) {
-      if (group[_keyName]?.toString() == _binFolder) continue;
-      
-      final groupName = group[_keyName]?.toString() ?? '';
-      final docs = await getGroupDocs(groupName);
-      
-      for (final doc in docs) {
+      // Also get documents from old group structure for backward compatibility
+      final groups = await getAllGroups();
+      final List<Document> documents = [];
+
+      // First, add documents from new Documents table
+      for (final map in maps) {
         try {
-          documents.add(Document(
-            id: doc[_keyId] as int?,
-            title: doc[_keyImgName]?.toString() ?? '',
-            type: 'Document',
-            imagePath: doc[_keyImgPath]?.toString() ?? '',
-            createdAt: group[_keyDate] != null 
-                ? DateTime.tryParse(group[_keyDate].toString()) ?? DateTime.now()
-                : DateTime.now(),
-            tagId: group[_keyTag]?.toString().isNotEmpty == true
-                ? int.tryParse(group[_keyTag].toString())
-                : null,
-          ));
+          documents.add(Document.fromMap(map));
         } catch (e) {
-          log('Error converting doc: $e');
+          log('Error parsing document from Documents table: $e');
         }
       }
-    }
 
-    return documents;
+      // Then, add documents from old group structure (for backward compatibility)
+      for (final group in groups) {
+        if (group[_keyName]?.toString() == _binFolder) continue;
+        
+        final groupName = group[_keyName]?.toString() ?? '';
+        final docs = await getGroupDocs(groupName);
+        
+        for (final doc in docs) {
+          try {
+            documents.add(Document(
+              id: doc[_keyId] as int?,
+              title: doc[_keyImgName]?.toString() ?? '',
+              type: 'Document',
+              imagePath: doc[_keyImgPath]?.toString() ?? '',
+              createdAt: group[_keyDate] != null 
+                  ? DateTime.tryParse(group[_keyDate].toString()) ?? DateTime.now()
+                  : DateTime.now(),
+              tagId: group[_keyTag]?.toString().isNotEmpty == true
+                  ? int.tryParse(group[_keyTag].toString())
+                  : null,
+            ));
+          } catch (e) {
+            log('Error converting doc: $e');
+          }
+        }
+      }
+
+      return documents;
+    } catch (e) {
+      log('Error getting all documents: $e');
+      return [];
+    }
   }
 
-  /// Get document by ID (converts from group structure)
+  /// Get document by ID from Documents table
   Future<Document?> getDocumentById(int id) async {
-    final groups = await getAllGroups();
-    
-    for (final group in groups) {
-      if (group[_keyName]?.toString() == _binFolder) continue;
+    try {
+      final db = await database;
       
-      final groupName = group[_keyName]?.toString() ?? '';
-      final docs = await getGroupDocs(groupName);
+      // First try to get from new Documents table
+      final List<Map<String, dynamic>> maps = await db.query(
+        _tableDocuments,
+        where: 'id = ? AND isDeleted = ?',
+        whereArgs: [id, 0],
+        limit: 1,
+      );
+
+      if (maps.isNotEmpty) {
+        return Document.fromMap(maps.first);
+      }
+
+      // Fallback to old group structure for backward compatibility
+      final groups = await getAllGroups();
       
-      for (final doc in docs) {
-        if (doc[_keyId] == id) {
-          return Document(
-            id: doc[_keyId] as int?,
-            title: doc[_keyImgName]?.toString() ?? '',
-            type: 'Document',
-            imagePath: doc[_keyImgPath]?.toString() ?? '',
-            createdAt: group[_keyDate] != null 
-                ? DateTime.tryParse(group[_keyDate].toString()) ?? DateTime.now()
-                : DateTime.now(),
-            tagId: group[_keyTag]?.toString().isNotEmpty == true
-                ? int.tryParse(group[_keyTag].toString())
-                : null,
-          );
+      for (final group in groups) {
+        if (group[_keyName]?.toString() == _binFolder) continue;
+        
+        final groupName = group[_keyName]?.toString() ?? '';
+        final docs = await getGroupDocs(groupName);
+        
+        for (final doc in docs) {
+          if (doc[_keyId] == id) {
+            return Document(
+              id: doc[_keyId] as int?,
+              title: doc[_keyImgName]?.toString() ?? '',
+              type: 'Document',
+              imagePath: doc[_keyImgPath]?.toString() ?? '',
+              createdAt: group[_keyDate] != null 
+                  ? DateTime.tryParse(group[_keyDate].toString()) ?? DateTime.now()
+                  : DateTime.now(),
+              tagId: group[_keyTag]?.toString().isNotEmpty == true
+                  ? int.tryParse(group[_keyTag].toString())
+                  : null,
+            );
+          }
         }
       }
+      
+      return null;
+    } catch (e) {
+      log('Error getting document by ID: $e');
+      return null;
     }
-    
-    return null;
   }
 
   /// Update document (converts to group structure)

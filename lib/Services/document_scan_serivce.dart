@@ -2,14 +2,14 @@ import 'dart:developer';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'database_helper.dart';
+import 'file_storage_service.dart';
 
 class DocumentScanService {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
-  /// Scan document and save all images
+  /// Scan document and save all images using FileStorageService
   Future<void> scanAndSaveDocument({
     required DocumentScanningResult result,
   }) async {
@@ -21,75 +21,58 @@ class DocumentScanService {
 
       log('Scanned images: ${result.images.toString()}');
 
-      // Save all images to local storage
-      final savedImagePaths = await _saveImagesToLocal(result.images);
+      // Use FileStorageService to save images and create database entries
+      final fileStorageService = FileStorageService.instance;
+      int successCount = 0;
 
-      if (savedImagePaths.isEmpty) {
-        log('Failed to save images');
-        return;
-      }
+      for (int i = 0; i < result.images.length; i++) {
+        try {
+          final imagePath = result.images[i];
+          final imageFile = File(imagePath);
 
-      // First image for group first image
-      final firstImagePath = savedImagePaths[0];
+          if (!await imageFile.exists()) {
+            log('Image file does not exist: $imagePath');
+            continue;
+          }
 
-      String finalFileName = firstImagePath.split("/").last;
-      if (!firstImagePath.split("/").last.toLowerCase().endsWith('.jpg') &&
-          !firstImagePath.split("/").last.toLowerCase().endsWith('.jpeg') &&
-          !firstImagePath.split("/").last.toLowerCase().endsWith('.png')) {
-        finalFileName = '${firstImagePath.split("/").last}.jpg';
-      }
+          // Read image bytes
+          final imageBytes = await imageFile.readAsBytes();
+          
+          // Generate filename
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final fileName = 'scanned_${timestamp}_$i.jpg';
+          final title = 'Scanned Document ${i + 1}';
 
-      // Create group name from filename
-      final groupName = _getFileNameWithoutExtension(finalFileName);
-      final date = DateTime.now().toString();
+          // Save using FileStorageService
+          final docId = await fileStorageService.saveImageFile(
+            imageBytes: imageBytes,
+            fileName: fileName,
+            title: title,
+          );
 
-      // Create group table if not exists
-      await _dbHelper.createDocTable(groupName);
-      
-      // Add group to alldocs table
-      await _dbHelper.addGroup(
-        groupName: groupName,
-        groupDate: date,
-        groupTag: '1', // Default tag
-        groupFirstImg: firstImagePath,
-      );
-
-      log('Group created: $groupName');
-
-      // Insert all images into the group table
-      for (int i = 0; i < savedImagePaths.length; i++) {
-        final imagePath = savedImagePaths[i];
-
-        String finalAllFileName = imagePath.split("/").last;
-        if (!imagePath.split("/").last.toLowerCase().endsWith('.jpg') &&
-            !imagePath.split("/").last.toLowerCase().endsWith('.jpeg') &&
-            !imagePath.split("/").last.toLowerCase().endsWith('.png')) {
-          finalAllFileName = '${imagePath.split("/").last}.jpg';
+          if (docId != null) {
+            successCount++;
+            log('Saved scanned image ${i + 1}/${result.images.length} with ID: $docId');
+          } else {
+            log('Failed to save scanned image ${i + 1} to database');
+          }
+        } catch (e) {
+          log('Error saving scanned image ${i + 1}: $e');
         }
-
-        final pageTitle = '${_getFileNameWithoutExtension(finalAllFileName)} - Page ${i + 1}';
-
-        final docId = await _dbHelper.addGroupDoc(
-          groupName: groupName,
-          imgPath: imagePath,
-          imgName: pageTitle,
-          imgNote: '',
-        );
-
-        log('Document page inserted with ID: $docId for page ${i + 1}');
       }
 
-      log('Successfully saved document with ${savedImagePaths.length} images');
+      log('Successfully saved ${successCount}/${result.images.length} scanned images');
+      
+      if (successCount == 0) {
+        throw Exception('Failed to save any scanned images');
+      }
     } catch (e) {
       log('Error in scanAndSaveDocument: $e');
       rethrow;
     }
   }
 
-  /// Scan additional pages and attach them to an existing document
-  ///
-  /// This will ONLY create entries in the DocumentDetail table
-  /// and will NOT create a new row in the Documents table.
+  /// Scan additional pages and save as new documents using FileStorageService
   Future<void> scanAndAddPagesToDocument({
     required int documentId,
     required DocumentScanningResult result,
@@ -100,101 +83,61 @@ class DocumentScanService {
         return;
       }
 
-      // Get document to find its group name
+      // Get document to get context (optional, for naming)
       final document = await _dbHelper.getDocumentById(documentId);
-      if (document == null) {
-        log('Document with ID $documentId not found');
-        return;
-      }
+      final baseTitle = document?.title ?? 'Scanned Document';
 
-      // Document title is the group name in new structure
-      final groupName = document.title;
+      // Use FileStorageService to save images and create database entries
+      final fileStorageService = FileStorageService.instance;
+      int successCount = 0;
 
-      // Save all images to local storage
-      final savedImagePaths = await _saveImagesToLocal(result.images);
-      if (savedImagePaths.isEmpty) {
-        log('Failed to save images');
-        return;
-      }
+      for (int i = 0; i < result.images.length; i++) {
+        try {
+          final imagePath = result.images[i];
+          final imageFile = File(imagePath);
 
-      // Get current number of pages to continue page numbering
-      final existingDocs = await _dbHelper.getGroupDocs(groupName);
-      final existingCount = existingDocs.length;
+          if (!await imageFile.exists()) {
+            log('Image file does not exist: $imagePath');
+            continue;
+          }
 
-      for (int i = 0; i < savedImagePaths.length; i++) {
-        final imagePath = savedImagePaths[i];
+          // Read image bytes
+          final imageBytes = await imageFile.readAsBytes();
+          
+          // Generate filename
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final fileName = 'scanned_${timestamp}_$i.jpg';
+          final title = '$baseTitle - Page ${i + 1}';
 
-        String finalAllFileName = imagePath.split("/").last;
-        if (!imagePath.split("/").last.toLowerCase().endsWith('.jpg') &&
-            !imagePath.split("/").last.toLowerCase().endsWith('.jpeg') &&
-            !imagePath.split("/").last.toLowerCase().endsWith('.png')) {
-          finalAllFileName = '${imagePath.split("/").last}.jpg';
+          // Save using FileStorageService
+          final docId = await fileStorageService.saveImageFile(
+            imageBytes: imageBytes,
+            fileName: fileName,
+            title: title,
+          );
+
+          if (docId != null) {
+            successCount++;
+            log('Saved additional page ${i + 1}/${result.images.length} with ID: $docId');
+          } else {
+            log('Failed to save additional page ${i + 1} to database');
+          }
+        } catch (e) {
+          log('Error saving additional page ${i + 1}: $e');
         }
-
-        final pageNumber = existingCount + i + 1;
-        final pageTitle = '${_getFileNameWithoutExtension(finalAllFileName)} - Page $pageNumber';
-
-        final docId = await _dbHelper.addGroupDoc(
-          groupName: groupName,
-          imgPath: imagePath,
-          imgName: pageTitle,
-          imgNote: '',
-        );
-
-        log(
-          'Document page inserted with ID: $docId for existing group $groupName, page $pageNumber',
-        );
       }
 
-      log(
-        'Successfully added ${savedImagePaths.length} pages to document $documentId',
-      );
+      log('Successfully saved ${successCount}/${result.images.length} additional pages');
+      
+      if (successCount == 0) {
+        throw Exception('Failed to save any additional pages');
+      }
     } catch (e) {
       log('Error in scanAndAddPagesToDocument: $e');
       rethrow;
     }
   }
 
-  /// Save scanned images to local storage
-  Future<List<String>> _saveImagesToLocal(List<String> imagePaths) async {
-    final List<String> savedPaths = [];
-
-    try {
-      // Get app directory for storing images
-      final directory = await getApplicationDocumentsDirectory();
-      final documentsDir = Directory('${directory.path}/documents');
-
-      // Create directory if it doesn't exist
-      if (!await documentsDir.exists()) {
-        await documentsDir.create(recursive: true);
-      }
-
-      // Copy each image to local storage
-      for (int i = 0; i < imagePaths.length; i++) {
-        final originalFile = File(imagePaths[i]);
-
-        if (await originalFile.exists()) {
-          // Generate unique filename
-          final timestamp = DateTime.now().millisecondsSinceEpoch;
-          final extension = path.extension(imagePaths[i]);
-          final newFileName = 'doc_${timestamp}_$i$extension';
-          final newPath = path.join(documentsDir.path, newFileName);
-
-          // Copy file to new location
-          final savedFile = await originalFile.copy(newPath);
-          savedPaths.add(savedFile.path);
-
-          log('Saved image ${i + 1}: $newPath');
-        } else {
-          log('Original file does not exist: ${imagePaths[i]}');
-        }
-      }
-    } catch (e) {
-      log('Error saving images to local: $e');
-    }
-
-    return savedPaths;
-  }
 
 
   /// Delete document and all its images
@@ -248,181 +191,112 @@ class DocumentScanService {
   }) async {
     try {
       if (imageFiles.isEmpty) {
-        log('No images to import');
+        log('No files to import');
         return;
       }
 
-      log('Importing ${imageFiles.length} image(s)');
+      log('Importing ${imageFiles.length} file(s)');
 
-      // Save all images to local storage
-      final savedImagePaths = await _saveImageFilesToLocal(imageFiles);
+      // Use FileStorageService to properly save files and create database entries
+      final fileStorageService = FileStorageService.instance;
+      int successCount = 0;
+      int failureCount = 0;
 
-      if (savedImagePaths.isEmpty) {
-        log('Failed to save images');
-        return;
-      }
-
-      // First image for group first image
-      final firstImagePath = savedImagePaths[0];
-
-      String finalFileName = firstImagePath.split("/").last;
-      if (!firstImagePath.split("/").last.toLowerCase().endsWith('.jpg') &&
-          !firstImagePath.split("/").last.toLowerCase().endsWith('.jpeg') &&
-          !firstImagePath.split("/").last.toLowerCase().endsWith('.png')) {
-        finalFileName = '${firstImagePath.split("/").last}.jpg';
-      }
-
-      // Create group name from filename
-      final groupName = _getFileNameWithoutExtension(finalFileName);
-      final date = DateTime.now().toString();
-
-      // Create group table if not exists
-      await _dbHelper.createDocTable(groupName);
-      
-      // Add group to alldocs table
-      await _dbHelper.addGroup(
-        groupName: groupName,
-        groupDate: date,
-        groupTag: '1', // Default tag
-        groupFirstImg: firstImagePath,
-      );
-
-      log('Group created: $groupName');
-
-      // Insert all images into the group table
-      for (int i = 0; i < savedImagePaths.length; i++) {
-        final imagePath = savedImagePaths[i];
-
-        String finalAllFileName = imagePath.split("/").last;
-        if (!imagePath.split("/").last.toLowerCase().endsWith('.jpg') &&
-            !imagePath.split("/").last.toLowerCase().endsWith('.jpeg') &&
-            !imagePath.split("/").last.toLowerCase().endsWith('.png')) {
-          finalAllFileName = '${imagePath.split("/").last}.jpg';
+      for (int i = 0; i < imageFiles.length; i++) {
+        final file = imageFiles[i];
+        
+        if (!await file.exists()) {
+          log('File does not exist: ${file.path}');
+          failureCount++;
+          continue;
         }
 
-        final pageTitle = '${_getFileNameWithoutExtension(finalAllFileName)} - Page ${i + 1}';
+        try {
+          // Get file extension to determine type
+          final extension = path.extension(file.path).toLowerCase();
+          final fileName = file.path.split('/').last;
+          final fileNameWithoutExt = _getFileNameWithoutExtension(fileName);
 
-        final docId = await _dbHelper.addGroupDoc(
-          groupName: groupName,
-          imgPath: imagePath,
-          imgName: pageTitle,
-          imgNote: '',
-        );
+          // Read file bytes
+          final fileBytes = await file.readAsBytes();
 
-        log('Document page inserted with ID: $docId for page ${i + 1}');
+          int? docId;
+
+          // Determine file type and save accordingly
+          if (extension == '.pdf') {
+            // Save PDF file
+            docId = await fileStorageService.savePDFFile(
+              pdfBytes: fileBytes,
+              fileName: fileName,
+              title: fileNameWithoutExt,
+            );
+            log('Saved PDF file: $fileName with ID: $docId');
+          } else if (['.jpg', '.jpeg', '.png', '.bmp', '.webp', '.heic'].contains(extension)) {
+            // Save image file
+            docId = await fileStorageService.saveImageFile(
+              imageBytes: fileBytes,
+              fileName: fileName,
+              title: fileNameWithoutExt,
+            );
+            log('Saved image file: $fileName with ID: $docId');
+          } else {
+            log('Unsupported file type: $extension for file: $fileName');
+            failureCount++;
+            continue;
+          }
+
+          if (docId != null) {
+            successCount++;
+            log('Successfully imported file ${i + 1}/${imageFiles.length}: $fileName (ID: $docId)');
+          } else {
+            failureCount++;
+            log('Failed to save file to database: $fileName');
+          }
+        } catch (e) {
+          failureCount++;
+          log('Error importing file ${file.path}: $e');
+        }
       }
 
-      log('Successfully imported and saved ${savedImagePaths.length} image(s)');
+      log('Import completed: $successCount successful, $failureCount failed');
+
+      if (successCount == 0 && failureCount > 0) {
+        throw Exception('Failed to import any files. Please check file formats.');
+      }
     } catch (e) {
       log('Error in importAndSaveImages: $e');
       rethrow;
     }
   }
 
-  /// Save image files to local storage
-  Future<List<String>> _saveImageFilesToLocal(List<File> imageFiles) async {
-    final List<String> savedPaths = [];
 
-    try {
-      // Get app directory for storing images
-      final directory = await getApplicationDocumentsDirectory();
-      final documentsDir = Directory('${directory.path}/documents');
-
-      // Create directory if it doesn't exist
-      if (!await documentsDir.exists()) {
-        await documentsDir.create(recursive: true);
-      }
-
-      // Copy each image to local storage
-      for (int i = 0; i < imageFiles.length; i++) {
-        final originalFile = imageFiles[i];
-
-        if (await originalFile.exists()) {
-          // Generate unique filename
-          final timestamp = DateTime.now().millisecondsSinceEpoch;
-          final extension = path.extension(originalFile.path);
-          final newFileName = 'imported_${timestamp}_$i${extension.isEmpty ? '.jpg' : extension}';
-          final newPath = path.join(documentsDir.path, newFileName);
-
-          // Copy file to new location
-          final savedFile = await originalFile.copy(newPath);
-          savedPaths.add(savedFile.path);
-
-          log('Saved imported image ${i + 1}: $newPath');
-        } else {
-          log('Original file does not exist: ${originalFile.path}');
-        }
-      }
-    } catch (e) {
-      log('Error saving imported images to local: $e');
-    }
-
-    return savedPaths;
-  }
-
-  /// Save edited image to database (similar to scanAndSaveDocument flow)
+  /// Save edited image using FileStorageService
   Future<void> saveEditedImage({
     required Uint8List imageBytes,
     required String originalFileName,
   }) async {
     try {
-      // Save image to local storage
-      final directory = await getApplicationDocumentsDirectory();
-      final documentsDir = Directory('${directory.path}/documents');
-
-      // Create directory if it doesn't exist
-      if (!await documentsDir.exists()) {
-        await documentsDir.create(recursive: true);
-      }
-
-      // Generate unique filename
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final extension = path.extension(originalFileName);
-      final newFileName = 'edited_${timestamp}${extension.isEmpty ? '.jpg' : extension}';
-      final imagePath = path.join(documentsDir.path, newFileName);
-
-      // Save image bytes to file
-      final imageFile = File(imagePath);
-      await imageFile.writeAsBytes(imageBytes);
-
-      log('Saved edited image: $imagePath');
-
-      String finalFileName = imagePath.split("/").last;
-      if (!imagePath.split("/").last.toLowerCase().endsWith('.jpg') &&
-          !imagePath.split("/").last.toLowerCase().endsWith('.jpeg') &&
-          !imagePath.split("/").last.toLowerCase().endsWith('.png')) {
-        finalFileName = '${imagePath.split("/").last}.jpg';
-      }
-
-      // Create group name from filename
-      final groupName = _getFileNameWithoutExtension(finalFileName);
-      final date = DateTime.now().toString();
-
-      // Create group table if not exists
-      await _dbHelper.createDocTable(groupName);
+      // Use FileStorageService to save image and create database entry
+      final fileStorageService = FileStorageService.instance;
       
-      // Add group to alldocs table
-      await _dbHelper.addGroup(
-        groupName: groupName,
-        groupDate: date,
-        groupTag: '1', // Default tag
-        groupFirstImg: imagePath,
+      // Generate filename from original
+      final fileNameWithoutExt = _getFileNameWithoutExtension(originalFileName);
+      final extension = path.extension(originalFileName);
+      final fileName = 'edited_${DateTime.now().millisecondsSinceEpoch}${extension.isEmpty ? '.jpg' : extension}';
+      final title = 'Edited $fileNameWithoutExt';
+
+      // Save using FileStorageService
+      final docId = await fileStorageService.saveImageFile(
+        imageBytes: imageBytes,
+        fileName: fileName,
+        title: title,
       );
 
-      log('Group created: $groupName');
-
-      // Insert image into the group table
-      final pageTitle = '${_getFileNameWithoutExtension(finalFileName)} - Page 1';
-      final docId = await _dbHelper.addGroupDoc(
-        groupName: groupName,
-        imgPath: imagePath,
-        imgName: pageTitle,
-        imgNote: '',
-      );
-
-      log('Document page inserted with ID: $docId');
-
-      log('Successfully saved edited image');
+      if (docId != null) {
+        log('Successfully saved edited image with ID: $docId');
+      } else {
+        throw Exception('Failed to save edited image to database');
+      }
     } catch (e) {
       log('Error in saveEditedImage: $e');
       rethrow;

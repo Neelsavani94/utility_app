@@ -20,7 +20,6 @@ class AppRoutes {
   static const String splitPDF = '/split-pdf';
   static const String splitPDFImagesList = '/split-pdf-images-list';
   static const String splitPDFPageEditor = '/split-pdf-page-editor';
-  static const String imageToPDF = '/image-to-pdf';
   static const String compress = '/compress';
   static const String watermark = '/watermark';
   static const String trash = '/trash';
@@ -31,6 +30,7 @@ class AppRoutes {
   static const String aiScannerEditor = '/ai-scanner-editor';
   static const String favorites = '/favorites';
   static const String imageViewer = '/image-viewer';
+  static const String importFiles = '/import-files';
   
   // Prevent instantiation
   AppRoutes._();

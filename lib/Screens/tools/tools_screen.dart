@@ -12,7 +12,10 @@ import 'package:simple_barcode_scanner/simple_barcode_scanner.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion_pdf;
+import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'dart:typed_data';
 
 class ToolsScreen extends StatelessWidget {
   const ToolsScreen({super.key});
@@ -127,7 +130,7 @@ class ToolsScreen extends StatelessWidget {
           } else if (label == 'Split PDF') {
             NavigationService.toSplitPDF();
           } else if (label == 'Extract Texts') {
-            NavigationService.toExtractText();
+            NavigationService.toImportFiles(forExtractText: true);
           } else if (label == 'QR Reader') {
             _handleQRScan(context, colorScheme);
           } else if (label == 'QR Generate') {
@@ -136,14 +139,12 @@ class ToolsScreen extends StatelessWidget {
             _showScanPDFOptions(context, colorScheme, isDark);
           } else if (label == 'eSign') {
             NavigationService.toESignList();
-          } else if (label == 'Image to PDF') {
-            NavigationService.toImageToPDF();
           } else if (label == 'Compress') {
-            NavigationService.toCompress();
+            _handleCompress(context, colorScheme);
           } else if (label == 'Watermark') {
-            NavigationService.toWatermark();
+            NavigationService.toImportFiles(forWatermark: true);
           } else if (label == 'Import') {
-            _handleImport(context, colorScheme);
+            NavigationService.toImportFiles();
           }
           // Handle other tool taps
         },
@@ -347,139 +348,6 @@ class ToolsScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _handleImport(
-    BuildContext context,
-    ColorScheme colorScheme,
-  ) async {
-    try {
-      // Show bottom sheet for import options
-      final source = await showModalBottomSheet<ImageSource>(
-        context: context,
-        backgroundColor: Colors.transparent,
-        builder: (context) => _ImportBottomSheet(
-          colorScheme: colorScheme,
-          onFileImport: () {
-            Navigator.pop(context);
-            _handleFileImport(context, colorScheme);
-          },
-        ),
-      );
-
-      if (source == null) return;
-
-      List<File> imageFiles = [];
-
-      if (source == ImageSource.camera || source == ImageSource.gallery) {
-        final ImagePicker picker = ImagePicker();
-        List<XFile> pickedFiles = [];
-
-        if (source == ImageSource.camera) {
-          // For camera, pick single image
-          final XFile? pickedFile = await picker.pickImage(
-            source: source,
-            imageQuality: 85,
-          );
-          if (pickedFile != null) {
-            pickedFiles = [pickedFile];
-          }
-        } else {
-          // For gallery, pick multiple images
-          pickedFiles = await picker.pickMultiImage(
-            imageQuality: 85,
-          );
-        }
-
-        // Convert XFile to File
-        imageFiles = pickedFiles.map((f) => File(f.path)).toList();
-      } else {
-        // For files, use FilePicker
-        final result = await FilePicker.platform.pickFiles(
-          allowMultiple: true,
-          type: FileType.custom,
-          allowedExtensions: ['jpg', 'jpeg', 'png', 'heic', 'webp', 'pdf'],
-        );
-
-        if (result != null && result.files.isNotEmpty) {
-          imageFiles = result.files
-              .where((file) => file.path != null)
-              .map((file) => File(file.path!))
-              .toList();
-        }
-      }
-
-      if (imageFiles.isEmpty) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('No files selected'),
-              backgroundColor: colorScheme.surfaceVariant,
-            ),
-          );
-        }
-        return;
-      }
-
-      // Show loading indicator
-      if (context.mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => Center(
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Importing ${imageFiles.length} file(s)...',
-                    style: TextStyle(color: colorScheme.onSurface),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      }
-
-      // Import and save using document scan service
-      final scanService = DocumentScanService();
-      await scanService.importAndSaveImages(imageFiles: imageFiles);
-
-      // Refresh home screen documents
-      if (context.mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
-        
-        final provider = Provider.of<HomeProvider>(context, listen: false);
-        provider.loadDocuments();
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${imageFiles.length} file(s) imported successfully'),
-            backgroundColor: colorScheme.primary,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        Navigator.of(context).pop(); // Close loading dialog if open
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error importing files: $e'),
-            backgroundColor: colorScheme.error,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _handleFileImport(
     BuildContext context,
     ColorScheme colorScheme,
@@ -576,6 +444,79 @@ class ToolsScreen extends StatelessWidget {
             content: Text('Error importing files: $e'),
             backgroundColor: colorScheme.error,
             duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  // Handle Compress - Direct PDF file pick and compress
+  Future<void> _handleCompress(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) async {
+    try {
+      // Pick PDF files only
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result == null || result.files.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('No files selected'),
+              backgroundColor: colorScheme.surfaceVariant,
+            ),
+          );
+        }
+        return;
+      }
+
+      final files = result.files
+          .where((file) => file.path != null)
+          .map((file) => File(file.path!))
+          .toList();
+
+      if (files.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Selected files could not be read'),
+              backgroundColor: colorScheme.surfaceVariant,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Navigate to full screen progress
+      if (!context.mounted) return;
+      
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => _CompressProgressScreen(
+            files: files,
+            colorScheme: colorScheme,
+          ),
+        ),
+      );
+      
+      // Refresh home screen documents after returning
+      if (context.mounted) {
+        final provider = Provider.of<HomeProvider>(context, listen: false);
+        provider.loadDocuments();
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: colorScheme.error,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -909,6 +850,290 @@ class _ImportBottomSheet extends StatelessWidget {
                 color: colorScheme.onSurface.withOpacity(0.4),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Full screen compression progress widget
+class _CompressProgressScreen extends StatefulWidget {
+  final List<File> files;
+  final ColorScheme colorScheme;
+
+  const _CompressProgressScreen({
+    required this.files,
+    required this.colorScheme,
+  });
+
+  @override
+  State<_CompressProgressScreen> createState() => _CompressProgressScreenState();
+}
+
+class _CompressProgressScreenState extends State<_CompressProgressScreen> {
+  double _progress = 0.0;
+  String _currentFileName = '';
+  int _currentFileIndex = 0;
+  int _totalFiles = 0;
+  bool _isComplete = false;
+  int _successCount = 0;
+  int _failureCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _totalFiles = widget.files.length;
+    _startCompression();
+  }
+
+  Future<void> _startCompression() async {
+    final List<File> savedFiles = [];
+
+    for (int i = 0; i < widget.files.length; i++) {
+      if (!mounted) break;
+
+      final file = widget.files[i];
+      
+      // Update UI at start of file processing
+      setState(() {
+        _currentFileIndex = i + 1;
+        _currentFileName = file.path.split('/').last;
+        _progress = i / widget.files.length; // Start of this file
+      });
+
+      try {
+        if (!await file.exists()) {
+          _failureCount++;
+          // Update progress even on failure
+          setState(() {
+            _progress = (i + 1) / widget.files.length;
+          });
+          continue;
+        }
+
+        final fileName = file.path.split('/').last;
+        final fileNameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+        
+        // Update progress: 10% into current file (reading)
+        setState(() {
+          _progress = (i + 0.1) / widget.files.length;
+        });
+        
+        final pdfBytes = await file.readAsBytes();
+        
+        // Update progress: 30% into current file (loading PDF)
+        setState(() {
+          _progress = (i + 0.3) / widget.files.length;
+        });
+        
+        final pdfDocument = syncfusion_pdf.PdfDocument(inputBytes: pdfBytes);
+
+        // Update progress: 50% into current file (optimizing)
+        setState(() {
+          _progress = (i + 0.5) / widget.files.length;
+        });
+        
+        // Optimize PDF
+        final optimizedBytes = await pdfDocument.save();
+        pdfDocument.dispose();
+
+        // Update progress: 70% into current file (processing bytes)
+        setState(() {
+          _progress = (i + 0.7) / widget.files.length;
+        });
+
+        // Use optimized if smaller, otherwise use original
+        final compressedBytes = optimizedBytes.length < pdfBytes.length
+            ? Uint8List.fromList(optimizedBytes)
+            : pdfBytes;
+
+        // Update progress: 80% into current file (saving)
+        setState(() {
+          _progress = (i + 0.8) / widget.files.length;
+        });
+
+        // Save to Download folder
+        final directory = await getApplicationDocumentsDirectory();
+        final downloadDir = Directory('${directory.path}/Download/Compressed');
+        if (!await downloadDir.exists()) {
+          await downloadDir.create(recursive: true);
+        }
+
+        final compressedFileName = '${fileNameWithoutExt}_compressed.pdf';
+        final compressedFile = File('${downloadDir.path}/$compressedFileName');
+        await compressedFile.writeAsBytes(compressedBytes);
+
+        // Update progress: 100% of current file completed
+        setState(() {
+          _progress = (i + 1) / widget.files.length;
+        });
+
+        if (await compressedFile.exists()) {
+          savedFiles.add(compressedFile);
+          _successCount++;
+        } else {
+          _failureCount++;
+        }
+      } catch (e) {
+        _failureCount++;
+        print('Error compressing file ${file.path}: $e');
+        // Update progress even on error
+        setState(() {
+          _progress = (i + 1) / widget.files.length;
+        });
+      }
+      
+      // Small delay to ensure UI updates are visible
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+
+    setState(() {
+      _progress = 1.0;
+      _isComplete = true;
+    });
+
+    // Show completion message
+    if (mounted) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _successCount > 0
+                  ? '$_successCount PDF(s) compressed and saved to Download folder'
+                  : 'Compression completed with errors',
+            ),
+            backgroundColor: _successCount > 0
+                ? widget.colorScheme.primary
+                : widget.colorScheme.error,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        // Auto close after 2 seconds
+        await Future.delayed(const Duration(seconds: 2));
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = widget.colorScheme;
+
+    return Scaffold(
+      backgroundColor: colorScheme.background,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(AppConstants.spacingXL),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Progress indicator
+                SizedBox(
+                  width: 200,
+                  height: 200,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Background circle
+                      SizedBox(
+                        width: 200,
+                        height: 200,
+                        child: CircularProgressIndicator(
+                          value: _progress,
+                          strokeWidth: 12,
+                          backgroundColor: colorScheme.surfaceVariant,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      // Percentage text
+                      Text(
+                        '${(_progress * 100).toStringAsFixed(0)}%',
+                        style: TextStyle(
+                          fontSize: 48,
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // Status text
+                Text(
+                  _isComplete ? 'Compression Complete!' : 'Compressing PDFs...',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: colorScheme.onBackground,
+                  ),
+                ),
+                const SizedBox(height: AppConstants.spacingM),
+                // File info
+                if (_currentFileName.isNotEmpty) ...[
+                  Text(
+                    _currentFileName,
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: AppConstants.spacingS),
+                ],
+                // Progress text
+                Text(
+                  'File $_currentFileIndex of $_totalFiles',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // Results
+                if (_isComplete) ...[
+                  Container(
+                    padding: const EdgeInsets.all(AppConstants.spacingM),
+                    decoration: BoxDecoration(
+                      color: _successCount > 0
+                          ? colorScheme.primary.withOpacity(0.1)
+                          : colorScheme.error.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _successCount > 0 ? Icons.check_circle : Icons.error,
+                          color: _successCount > 0
+                              ? colorScheme.primary
+                              : colorScheme.error,
+                        ),
+                        const SizedBox(width: AppConstants.spacingS),
+                        Text(
+                          '$_successCount successful, $_failureCount failed',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: _successCount > 0
+                                ? colorScheme.primary
+                                : colorScheme.error,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
