@@ -75,7 +75,7 @@ class AppConstants {
     {'icon': Icons.qr_code_scanner_rounded, 'label': 'QR Scan'},
     {'icon': Icons.camera_alt_rounded, 'label': 'Camera'},
     {'icon': Icons.document_scanner_rounded, 'label': 'OCR Scan'},
-    {'icon': Icons.settings, 'label': 'Setting'},
+    {'icon': Icons.folder_open_rounded, 'label': 'Import'},
   ];
 
   // All Tools List for Tools Screen

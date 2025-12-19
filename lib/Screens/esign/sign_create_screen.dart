@@ -1,9 +1,10 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:signature/signature.dart';
+import 'package:syncfusion_flutter_signaturepad/signaturepad.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:path_provider/path_provider.dart';
+import 'dart:ui' as ui;
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Models/signature_model.dart';
@@ -16,7 +17,7 @@ class SignCreateScreen extends StatefulWidget {
 }
 
 class _SignCreateScreenState extends State<SignCreateScreen> {
-  SignatureController? _signatureController;
+  final GlobalKey<SfSignaturePadState> _signaturePadKey = GlobalKey<SfSignaturePadState>();
 
   final GetStorage _storage = GetStorage();
   
@@ -33,36 +34,6 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
     Colors.teal,
     Colors.pink,
   ];
-
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeSignatureController();
-  }
-
-  void _initializeSignatureController() {
-    _signatureController = SignatureController(
-      penStrokeWidth: _strokeWidth,
-      penColor: _selectedColor,
-      exportBackgroundColor: Colors.white,
-    );
-  }
-
-  void _updateSignatureController() {
-    _signatureController?.dispose();
-    _signatureController = SignatureController(
-      penStrokeWidth: _strokeWidth,
-      penColor: _selectedColor,
-      exportBackgroundColor: Colors.white,
-    );
-  }
-
-  @override
-  void dispose() {
-    _signatureController?.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -105,9 +76,9 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
       ),
       body: Column(
         children: [
-          // Main Content Area - Paint Board
+          // Main Content Area - Signature Pad
           Expanded(
-            child: _buildPaintBoard(colorScheme, isDark),
+            child: _buildSignaturePad(colorScheme, isDark),
           ),
           
           // Control Panel
@@ -120,12 +91,7 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
     );
   }
 
-
-  Widget _buildPaintBoard(ColorScheme colorScheme, bool isDark) {
-    if (_signatureController == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    
+  Widget _buildSignaturePad(ColorScheme colorScheme, bool isDark) {
     return Container(
       margin: const EdgeInsets.all(AppConstants.spacingM),
       decoration: BoxDecoration(
@@ -146,18 +112,18 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: Signature(
-          controller: _signatureController!,
-          backgroundColor: Colors.white,
-          height: double.infinity,
+        child: SfSignaturePad(
+          key: _signaturePadKey,
+          backgroundColor: Colors.transparent, // Transparent background
+          strokeColor: _selectedColor,
+          minimumStrokeWidth: _strokeWidth,
+          maximumStrokeWidth: _strokeWidth,
         ),
       ),
     );
   }
 
-
   Widget _buildControlPanel(ColorScheme colorScheme, bool isDark) {
-
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: AppConstants.spacingL,
@@ -199,7 +165,8 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
                     onTap: () {
                       setState(() {
                         _selectedColor = color;
-                        _updateSignatureController();
+                        // Update signature pad color
+                        _updateSignaturePadColor();
                       });
                     },
                     child: Container(
@@ -254,7 +221,8 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
                   onChanged: (value) {
                     setState(() {
                       _strokeWidth = value;
-                      _updateSignatureController();
+                      // Update signature pad stroke width
+                      _updateSignaturePadStrokeWidth();
                     });
                   },
                 ),
@@ -274,7 +242,7 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
             children: [
               TextButton.icon(
                 onPressed: () {
-                  _signatureController?.clear();
+                  _signaturePadKey.currentState?.clear();
                 },
                 icon: const Icon(Icons.clear_rounded),
                 label: const Text('Clear'),
@@ -284,6 +252,16 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
         ],
       ),
     );
+  }
+
+  void _updateSignaturePadColor() {
+    // Rebuild signature pad with new color
+    setState(() {});
+  }
+
+  void _updateSignaturePadStrokeWidth() {
+    // Rebuild signature pad with new stroke width
+    setState(() {});
   }
 
   Widget _buildActionButtons(ColorScheme colorScheme, bool isDark) {
@@ -336,8 +314,9 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
 
   Future<void> _saveSignature() async {
     try {
-      // Save paint signature
-      if (_signatureController == null || _signatureController!.isEmpty) {
+      // Check if signature pad has any strokes
+      final signaturePadState = _signaturePadKey.currentState;
+      if (signaturePadState == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Please draw a signature first'),
@@ -347,14 +326,29 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
         return;
       }
 
-      final signatureData = await _signatureController!.toPngBytes();
-      if (signatureData == null) {
-        throw Exception('Failed to export signature');
-      }
+      // Export signature as image (PNG without background)
+      final uiImage = await signaturePadState.toImage();
 
-      await _saveSignatureToStorage(signatureData);
+      // Convert to PNG bytes with transparent background
+      final byteData = await uiImage.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        uiImage.dispose();
+        throw Exception('Failed to convert signature to PNG');
+      }
+      
+      final pngBytes = byteData.buffer.asUint8List();
+      uiImage.dispose();
+      
+      await _saveSignatureToStorage(Uint8List.fromList(pngBytes));
 
       if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Signature saved successfully'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            duration: const Duration(seconds: 2),
+          ),
+        );
         NavigationService.goBack();
       }
     } catch (e) {
@@ -368,6 +362,7 @@ class _SignCreateScreenState extends State<SignCreateScreen> {
       }
     }
   }
+
 
   Future<void> _saveSignatureToStorage(Uint8List imageData) async {
     final directory = await getApplicationDocumentsDirectory();

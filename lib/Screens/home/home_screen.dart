@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:simple_barcode_scanner/simple_barcode_scanner.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../Constants/app_constants.dart';
 import '../../Providers/home_provider.dart';
 import '../../Components/empty_state.dart';
@@ -126,10 +127,10 @@ class _HomeScreenState extends State<HomeScreen>
 
     return Consumer<HomeProvider>(
       builder: (context, provider, child) {
-        // Refresh tags when bottom nav changes from settings (index 4) to home
+        // Refresh tags when bottom nav changes
         final currentIndex = provider.selectedBottomNavIndex;
-        if (_previousBottomNavIndex == 4 && currentIndex != 4) {
-          // Refresh tags when returning from settings
+        if (_previousBottomNavIndex != currentIndex && currentIndex == 0) {
+          // Refresh tags when returning to home
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               _loadTags();
@@ -153,48 +154,33 @@ class _HomeScreenState extends State<HomeScreen>
               colorScheme,
               isDark,
               provider,
-              provider.selectedBottomNavIndex == 4
-                  ? Text(
-                      'Setting',
+              RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: 'Scanify',
                       style: TextStyle(
                         color: colorScheme.secondary,
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.5,
                       ),
-                    )
-                  : RichText(
-                      text: TextSpan(
-                        children: [
-                          TextSpan(
-                            text: 'Scanify',
-                            style: TextStyle(
-                              color: colorScheme.secondary,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.5,
-                            ),
-                          ),
-                          TextSpan(
-                            text: 'AI',
-                            style: TextStyle(
-                              color: colorScheme.onBackground,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.5,
-                            ),
-                          ),
-                        ],
+                    ),
+                    TextSpan(
+                      text: 'AI',
+                      style: TextStyle(
+                        color: colorScheme.onBackground,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5,
                       ),
                     ),
+                  ],
+                ),
+              ),
             ),
             body: Builder(
               builder: (context) {
-                // Show SettingsScreen when settings icon (index 4) is selected
-                if (provider.selectedBottomNavIndex == 4) {
-                  return const SettingsScreen();
-                }
-
                 // Default home content
                 return SingleChildScrollView(
                   child: Column(
@@ -264,7 +250,9 @@ class _HomeScreenState extends State<HomeScreen>
                                       icon: Icons.document_scanner_rounded,
                                     ),
                                   )
-                                : _buildDocumentsGrid(context, provider),
+                                : provider.viewMode == 'grid'
+                                ? _buildDocumentsGridView(context, provider)
+                                : _buildDocumentsList(context, provider),
                           ],
                         ),
                       ),
@@ -289,6 +277,9 @@ class _HomeScreenState extends State<HomeScreen>
                 } else if (index == 3) {
                   // Handle OCR Scan (index 3) - pick image first, then navigate
                   await _handleOCRScan(context, colorScheme);
+                } else if (index == 4) {
+                  // Handle Import (index 4) - navigate to import files
+                  NavigationService.toImportFiles();
                 } else {
                   // For other items, update the selected index
                   provider.setSelectedBottomNavIndex(index);
@@ -356,6 +347,15 @@ class _HomeScreenState extends State<HomeScreen>
           Icons.refresh_rounded,
           () async {
             await context.read<HomeProvider>().loadDocuments();
+          },
+          colorScheme,
+          isDark,
+        ),
+        _buildHeaderAction(
+          context,
+          Icons.settings_rounded,
+          () {
+            NavigationService.toSettings();
           },
           colorScheme,
           isDark,
@@ -469,6 +469,16 @@ class _HomeScreenState extends State<HomeScreen>
                     false,
                   ),
                 ),
+                PopupMenuItem(
+                  value: 'view_mode',
+                  child: _buildMenuItem(
+                    context,
+                    Icons.view_module_rounded,
+                    'View Mode',
+                    colorScheme,
+                    false,
+                  ),
+                ),
               ],
               onSelected: (value) {
                 switch (value) {
@@ -477,6 +487,9 @@ class _HomeScreenState extends State<HomeScreen>
                     break;
                   case 'create_tag':
                     _showCreateTagDialog(context, colorScheme, isDark);
+                    break;
+                  case 'view_mode':
+                    _showViewModeDialog(context, colorScheme, isDark, provider);
                     break;
                   case 'sort_by':
                     _showSortByDialog(context, colorScheme, isDark, provider);
@@ -579,6 +592,9 @@ class _HomeScreenState extends State<HomeScreen>
             } else if (index == 2) {
               // eSign tool
               NavigationService.toESignList();
+            } else if (index == 3) {
+              // Watermark tool - same as Tools Screen
+              NavigationService.toImportFiles(forWatermark: true);
             } else {
               // Other specific tools
             }
@@ -806,7 +822,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildDocumentsGrid(BuildContext context, HomeProvider provider) {
+  Widget _buildDocumentsList(BuildContext context, HomeProvider provider) {
     return ListView.separated(
       padding: EdgeInsets.zero,
       shrinkWrap: true,
@@ -818,6 +834,184 @@ class _HomeScreenState extends State<HomeScreen>
         final document = provider.filteredDocuments[index];
         return _buildDocumentCard(context, document, provider);
       },
+    );
+  }
+
+  Widget _buildDocumentsGridView(BuildContext context, HomeProvider provider) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return GridView.builder(
+      padding: EdgeInsets.zero,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 0.75,
+      ),
+      itemCount: provider.filteredDocuments.length,
+      itemBuilder: (context, index) {
+        final document = provider.filteredDocuments[index];
+        return _buildGridDocumentCard(
+          context,
+          document,
+          provider,
+          colorScheme,
+          isDark,
+        );
+      },
+    );
+  }
+
+  Widget _buildGridDocumentCard(
+    BuildContext context,
+    DocumentModel document,
+    HomeProvider provider,
+    ColorScheme colorScheme,
+    bool isDark,
+  ) {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DocumentDetailScreen(
+            document: Document(
+              title: document.name,
+              type: document.category,
+              imagePath: document.imagePath ?? "",
+              thumbnailPath: document.thumbnailPath,
+              id: int.parse(document.id),
+              isFavourite: document.isFavorite,
+              isDeleted: document.isDeleted,
+              createdAt: document.createdAt,
+              deletedAt: document.deletedAt,
+            ),
+          ),
+        ),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? colorScheme.surface : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isDark
+                ? colorScheme.outline.withOpacity(0.1)
+                : colorScheme.outline.withOpacity(0.08),
+            width: 0.5,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Thumbnail - takes most of the space
+            Expanded(
+              flex: 3,
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(12),
+                ),
+                child: _buildDocumentThumbnail(
+                  document,
+                  colorScheme,
+                  200,
+                  isDark,
+                ),
+              ),
+            ),
+            // Content section
+            Expanded(
+              flex: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Title
+                    Text(
+                      document.name,
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    // Date
+                    Text(
+                      document.formattedDate,
+                      style: TextStyle(
+                        color: colorScheme.onSurface.withOpacity(0.6),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    // Action icons row
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Phone icon
+                        Icon(
+                          Icons.phone_android_rounded,
+                          size: 14,
+                          color: colorScheme.primary,
+                        ),
+                        // Star icon
+                        GestureDetector(
+                          onTap: () => provider.toggleFavorite(document.id),
+                          child: Icon(
+                            document.isFavorite
+                                ? Icons.star_rounded
+                                : Icons.star_border_rounded,
+                            size: 16,
+                            color: document.isFavorite
+                                ? Colors.amber
+                                : colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                        // Share icon
+                        GestureDetector(
+                          onTap: () {
+                            // Handle share
+                            _handleShareDocument(context, document);
+                          },
+                          child: Icon(
+                            Icons.share_rounded,
+                            size: 14,
+                            color: colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                        // More icon
+                        GestureDetector(
+                          onTap: () {
+                            // Handle more options
+                            _showDocumentOptionsBottomSheet(
+                              context,
+                              document,
+                              colorScheme,
+                              isDark,
+                              provider,
+                            );
+                          },
+                          child: Icon(
+                            Icons.more_vert_rounded,
+                            size: 14,
+                            color: colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1399,8 +1593,12 @@ class _HomeScreenState extends State<HomeScreen>
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            _showScannerOptionsDialog(context, colorScheme, isDark);
+          onTap: () async {
+            await _requestCameraPermissionAndShowDialog(
+              context,
+              colorScheme,
+              isDark,
+            );
           },
           borderRadius: BorderRadius.circular(32),
           child: const Icon(
@@ -1411,6 +1609,65 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _requestCameraPermissionAndShowDialog(
+    BuildContext context,
+    ColorScheme colorScheme,
+    bool isDark,
+  ) async {
+    // Request camera permission
+    final status = await Permission.camera.request();
+
+    if (status.isGranted) {
+      // Permission granted, show scanner options dialog
+      _showScannerOptionsDialog(context, colorScheme, isDark);
+    } else if (status.isDenied) {
+      // Permission denied, show message
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Camera permission is required to use this feature',
+            ),
+            backgroundColor: colorScheme.error,
+            action: SnackBarAction(
+              label: 'Settings',
+              textColor: Colors.white,
+              onPressed: () {
+                openAppSettings();
+              },
+            ),
+          ),
+        );
+      }
+    } else if (status.isPermanentlyDenied) {
+      // Permission permanently denied, open app settings
+      if (context.mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Camera Permission Required'),
+            content: const Text(
+              'Camera permission is required to use this feature. Please enable it in app settings.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  openAppSettings();
+                },
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildMenuItem(
@@ -1822,6 +2079,118 @@ class _HomeScreenState extends State<HomeScreen>
         ],
       ),
     );
+  }
+
+  void _showViewModeDialog(
+    BuildContext context,
+    ColorScheme colorScheme,
+    bool isDark,
+    HomeProvider provider,
+  ) {
+    // Small delay to ensure popup is dismissed
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (!context.mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: isDark
+              ? colorScheme.surface.withOpacity(0.95)
+              : Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Text(
+            'View Mode',
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // List View Option
+              ListTile(
+                leading: Icon(
+                  Icons.view_list_rounded,
+                  color: provider.viewMode == 'list'
+                      ? colorScheme.primary
+                      : colorScheme.onSurface.withOpacity(0.6),
+                  size: 24,
+                ),
+                title: Text(
+                  'List View',
+                  style: TextStyle(
+                    color: provider.viewMode == 'list'
+                        ? colorScheme.primary
+                        : colorScheme.onSurface,
+                    fontSize: 16,
+                    fontWeight: provider.viewMode == 'list'
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                ),
+                trailing: provider.viewMode == 'list'
+                    ? Icon(
+                        Icons.check_rounded,
+                        color: colorScheme.primary,
+                        size: 20,
+                      )
+                    : null,
+                onTap: () {
+                  provider.setViewMode('list');
+                  Navigator.pop(context);
+                },
+              ),
+              // Grid View Option
+              ListTile(
+                leading: Icon(
+                  Icons.view_module_rounded,
+                  color: provider.viewMode == 'grid'
+                      ? colorScheme.primary
+                      : colorScheme.onSurface.withOpacity(0.6),
+                  size: 24,
+                ),
+                title: Text(
+                  'Grid View',
+                  style: TextStyle(
+                    color: provider.viewMode == 'grid'
+                        ? colorScheme.primary
+                        : colorScheme.onSurface,
+                    fontSize: 16,
+                    fontWeight: provider.viewMode == 'grid'
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                ),
+                trailing: provider.viewMode == 'grid'
+                    ? Icon(
+                        Icons.check_rounded,
+                        color: colorScheme.primary,
+                        size: 20,
+                      )
+                    : null,
+                onTap: () {
+                  provider.setViewMode('grid');
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(
+                'Cancel',
+                style: TextStyle(color: colorScheme.onSurface.withOpacity(0.6)),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   void _showDocumentOptionsBottomSheet(

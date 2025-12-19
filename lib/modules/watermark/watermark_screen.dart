@@ -2,18 +2,20 @@ import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:watermark_unique/watermark_unique.dart';
-import 'package:watermark_unique/image_format.dart';
+import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:image/image.dart' as img;
+import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:provider/provider.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Services/file_storage_service.dart';
 import '../../Services/database_helper.dart';
 import '../../Providers/home_provider.dart';
+import '../../Models/document_model.dart';
 
 class WatermarkScreen extends StatefulWidget {
   final String? initialFilePath;
@@ -38,6 +40,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
 
   // Preview state
   File? _previewFile;
+  int _previewUpdateKey = 0; // Key to force PDFView to reload when preview changes
 
   @override
   void initState() {
@@ -50,11 +53,11 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
   Future<void> _checkAndSetFile(String filePath) async {
     try {
       log('Checking file path: $filePath');
-      
+
       // The path from database should be the full path from FileStorageService
       // First, try the path as-is (it might already be a full path)
       File? file = File(filePath);
-      
+
       if (await file.exists()) {
         log('File found at original path: $filePath');
         setState(() {
@@ -84,14 +87,14 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
 
       // If file doesn't exist, try to find it in storage directories
       log('File not found at: $filePath, searching in storage directories...');
-      
+
       final fileName = filePath.split('/').last;
       final fileStorageService = FileStorageService.instance;
-      
+
       // Try Images directory - search for files matching the pattern
       try {
         final imagesDir = await fileStorageService.getImagesDirectory();
-        
+
         // First try exact filename match
         final possiblePath = '${imagesDir.path}/$fileName';
         var possibleFile = File(possiblePath);
@@ -102,7 +105,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
           });
           return;
         }
-        
+
         // If not found, try searching for files that contain the original filename
         // (in case the stored path has a different name pattern)
         try {
@@ -112,8 +115,12 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
               if (entity is File) {
                 final entityName = entity.path.split('/').last;
                 // Check if filename matches or contains parts of the original
-                if (entityName.contains(fileName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')) ||
-                    fileName.contains(entityName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ''))) {
+                if (entityName.contains(
+                      fileName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ''),
+                    ) ||
+                    fileName.contains(
+                      entityName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ''),
+                    )) {
                   log('Found similar file in Images directory: ${entity.path}');
                   setState(() {
                     _selectedFile = entity;
@@ -133,7 +140,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       // Try PDF directory
       try {
         final pdfDir = await fileStorageService.getPDFDirectory();
-        
+
         // First try exact filename match
         final possiblePath = '${pdfDir.path}/$fileName';
         var possibleFile = File(possiblePath);
@@ -144,7 +151,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
           });
           return;
         }
-        
+
         // Search for similar files
         try {
           final dir = Directory(pdfDir.path);
@@ -152,8 +159,12 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
             await for (var entity in dir.list()) {
               if (entity is File) {
                 final entityName = entity.path.split('/').last;
-                if (entityName.contains(fileName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')) ||
-                    fileName.contains(entityName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ''))) {
+                if (entityName.contains(
+                      fileName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ''),
+                    ) ||
+                    fileName.contains(
+                      entityName.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ''),
+                    )) {
                   log('Found similar file in PDF directory: ${entity.path}');
                   setState(() {
                     _selectedFile = entity;
@@ -187,14 +198,14 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       }
 
       // File not found anywhere, show error
-      log('File not found in any storage location: $fileName (original path: $filePath)');
+      log(
+        'File not found in any storage location: $fileName (original path: $filePath)',
+      );
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                'File not found: ${filePath.split('/').last}',
-              ),
+              content: Text('File not found: ${filePath.split('/').last}'),
               backgroundColor: Theme.of(context).colorScheme.error,
               duration: const Duration(seconds: 3),
             ),
@@ -311,13 +322,12 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
                       children: [
                         // Document preview
                         Center(
-                          child: _previewFile != null
-                              ? Image.file(_previewFile!, fit: BoxFit.contain)
-                              : Image.file(_selectedFile!, fit: BoxFit.contain),
+                          child: _buildPreviewWidget(),
                         ),
-                        // Watermark preview overlay (if text is entered)
+                        // Watermark preview overlay (only for images, not PDFs)
                         if (_watermarkTextController.text.isNotEmpty &&
-                            _selectedFile != null)
+                            _selectedFile != null &&
+                            !_selectedFile!.path.toLowerCase().endsWith('.pdf'))
                           Positioned.fill(
                             child: IgnorePointer(
                               child: CustomPaint(
@@ -469,23 +479,25 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Container(
-                  decoration: BoxDecoration(
-        color: isDark ? colorScheme.surface : Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-                  child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+    return StatefulBuilder(
+      builder: (BuildContext context, StateSetter setModalState) {
+        return Container(
+          decoration: BoxDecoration(
+            color: isDark ? colorScheme.surface : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
             Text(
               'Edit Watermark',
-                              style: TextStyle(
+              style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
                 color: colorScheme.onSurface,
@@ -524,16 +536,16 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
             Wrap(
               spacing: 12,
               runSpacing: 12,
-                        children: [
-                _buildColorOption(Colors.yellow),
-                _buildColorOption(Colors.red),
-                _buildColorOption(Colors.blue),
-                _buildColorOption(Colors.green),
-                _buildColorOption(Colors.orange),
-                _buildColorOption(Colors.purple),
-                _buildColorOption(Colors.pink),
-                _buildColorOption(Colors.black),
-                _buildColorOption(Colors.white),
+              children: [
+                _buildColorOption(Colors.yellow, setModalState),
+                _buildColorOption(Colors.red, setModalState),
+                _buildColorOption(Colors.blue, setModalState),
+                _buildColorOption(Colors.green, setModalState),
+                _buildColorOption(Colors.orange, setModalState),
+                _buildColorOption(Colors.purple, setModalState),
+                _buildColorOption(Colors.pink, setModalState),
+                _buildColorOption(Colors.black, setModalState),
+                _buildColorOption(Colors.white, setModalState),
               ],
             ),
             const SizedBox(height: 24),
@@ -554,13 +566,14 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
               divisions: 100,
               label: '${(_watermarkOpacity * 100).toInt()}%',
               onChanged: (value) {
+                setModalState(() {
+                  _watermarkOpacity = value;
+                });
                 setState(() {
                   _watermarkOpacity = value;
                 });
-                // Update preview after opacity change
-                Future.delayed(const Duration(milliseconds: 100), () {
-                  _updatePreview();
-                });
+                // Update preview immediately after opacity change
+                _updatePreview();
               },
               activeColor: colorScheme.primary,
             ),
@@ -571,65 +584,276 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
                 onPressed: () {
                   Navigator.pop(context);
                 },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: colorScheme.primary,
-                                foregroundColor: colorScheme.onPrimary,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary,
+                  foregroundColor: colorScheme.onPrimary,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                child: const Text('Done'),
-                          ),
-                      ),
-                    ],
                   ),
                 ),
+                child: const Text('Done'),
+              ),
+            ),
+              ],
+            ),
+          ),
+        );
+      },
     );
+  }
+
+  Widget _buildPreviewWidget() {
+    if (_selectedFile == null) {
+      return const SizedBox.shrink();
+    }
+
+    final extension = _selectedFile!.path.split('.').last.toLowerCase();
+    final fileToShow = _previewFile ?? _selectedFile!;
+    final filePath = fileToShow.path;
+
+    if (extension == 'pdf') {
+      // Show PDF preview with full viewer functionality
+      if (filePath.isEmpty) {
+        return Center(
+          child: Text(
+            'PDF preview not available',
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+          ),
+        );
+      }
+      return PDFView(
+        key: ValueKey('pdf_preview_${_previewUpdateKey}_$filePath'), // Force reload when key changes
+        filePath: filePath,
+        enableSwipe: true, // Enable swipe to navigate pages
+        swipeHorizontal: true, // Horizontal swipe
+        autoSpacing: true, // Auto spacing between pages
+        pageFling: true, // Enable page fling
+        fitEachPage: false, // Don't fit each page, show full document
+        onRender: (pages) {
+          log('PDF preview rendered with $pages pages (key: $_previewUpdateKey)');
+        },
+        onError: (error) {
+          log('PDF preview error: $error');
+        },
+        onPageError: (page, error) {
+          log('PDF preview page error: $page - $error');
+        },
+        onViewCreated: (PDFViewController controller) {
+          log('PDF preview view created (key: $_previewUpdateKey)');
+        },
+        onPageChanged: (int? page, int? total) {
+          if (page != null && total != null) {
+            log('PDF preview: Page $page of $total');
+          }
+        },
+      );
+    } else {
+      // Show image preview
+      return Image.file(fileToShow, fit: BoxFit.contain);
+    }
   }
 
   Future<void> _updatePreview() async {
     if (_selectedFile == null || _watermarkTextController.text.trim().isEmpty) {
       setState(() {
         _previewFile = null;
+        _previewUpdateKey++; // Force refresh even when clearing preview
       });
       return;
     }
 
     try {
       final extension = _selectedFile!.path.split('.').last.toLowerCase();
-      if (!['jpg', 'jpeg', 'png', 'bmp', 'webp'].contains(extension)) {
-        // For PDFs, just show the original file
-        setState(() {
-          _previewFile = null;
-        });
-        return;
-      }
-
+      
       // Verify file exists
       if (!await _selectedFile!.exists()) {
         log('Preview: File does not exist');
         return;
       }
 
-      // Create preview with watermark
-      final previewPath = await _createPreviewWatermark();
-      if (previewPath != null && mounted) {
+      log('Updating preview for $extension file...');
+      String? previewPath;
+      
+      if (['jpg', 'jpeg', 'png', 'bmp', 'webp'].contains(extension)) {
+        // Create image preview with watermark
+        previewPath = await _createPreviewWatermark();
+      } else if (extension == 'pdf') {
+        // Create PDF preview with watermark
+        previewPath = await _createPreviewPDFWatermark();
+      } else {
+        // Unsupported file type
         setState(() {
-          _previewFile = File(previewPath);
+          _previewFile = null;
+          _previewUpdateKey++;
+        });
+        return;
+      }
+
+      if (previewPath != null && previewPath.isNotEmpty && mounted) {
+        log('Preview updated successfully: $previewPath');
+        setState(() {
+          _previewFile = File(previewPath!);
+          _previewUpdateKey++; // Increment key to force PDFView reload
         });
       } else {
+        log('Preview creation returned null or empty path');
         // If preview creation fails, just show original
         setState(() {
           _previewFile = null;
+          _previewUpdateKey++; // Increment key even on failure
         });
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       log('Preview update error: $e');
+      log('Stack trace: $stackTrace');
       // On error, just show original file
       setState(() {
         _previewFile = null;
+        _previewUpdateKey++;
       });
+    }
+  }
+
+  // Helper function to render text to an image using dart:ui
+  Future<img.Image?> _renderTextToImage(
+    String text,
+    double fontSize,
+    Color color,
+    double opacity,
+  ) async {
+    try {
+      // Create a text style
+      final textStyle = ui.TextStyle(
+        color: color.withOpacity(opacity),
+        fontSize: fontSize,
+        fontWeight: FontWeight.bold,
+      );
+
+      // Create a paragraph builder
+      final paragraphBuilder = ui.ParagraphBuilder(
+        ui.ParagraphStyle(
+          textAlign:
+              TextAlign.left, // Use left align to prevent text wrapping issues
+          textDirection: TextDirection.ltr,
+        ),
+      );
+      paragraphBuilder.pushStyle(textStyle);
+      paragraphBuilder.addText(text);
+      final paragraph = paragraphBuilder.build();
+
+      // First, layout with a very large width to get the actual intrinsic width
+      // This ensures we get the full text width without any constraints
+      paragraph.layout(ui.ParagraphConstraints(width: 10000.0));
+
+      // Get actual text dimensions - use maxIntrinsicWidth for full text width
+      final textWidth = paragraph.maxIntrinsicWidth.ceil();
+      final textHeight = paragraph.height.ceil();
+
+      // Re-layout with the actual width to ensure proper rendering
+      paragraph.layout(ui.ParagraphConstraints(width: textWidth.toDouble()));
+
+      // Add generous padding to ensure text is fully visible
+      final padding = (fontSize * 0.3).ceil().clamp(10, 50);
+      final imageWidth = (textWidth + padding * 2).clamp(1, 10000);
+      final imageHeight = (textHeight + padding * 2).clamp(1, 10000);
+
+      log(
+        'Rendering text: "$text" - Size: ${textWidth}x$textHeight, Image: ${imageWidth}x$imageHeight',
+      );
+
+      // Create a picture recorder and canvas
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+
+      // Draw the text with padding offset to ensure full text is visible
+      canvas.drawParagraph(
+        paragraph,
+        Offset(padding.toDouble(), padding.toDouble()),
+      );
+
+      // Convert to image
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(imageWidth, imageHeight);
+
+      // Convert ui.Image to image package Image
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        log('Error: Failed to convert ui.Image to byte data');
+        return null;
+      }
+
+      final pngBytes = byteData.buffer.asUint8List();
+      final decodedImage = img.decodeImage(pngBytes);
+
+      if (decodedImage == null) {
+        log('Error: Failed to decode PNG bytes');
+        return null;
+      }
+
+      log(
+        'Successfully rendered text image: ${decodedImage.width}x${decodedImage.height}',
+      );
+      return decodedImage;
+    } catch (e, stackTrace) {
+      log('Error rendering text to image: $e');
+      log('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  // Helper function to draw text on image with rotation and position
+  Future<void> _drawTextOnImage(
+    img.Image image,
+    String text,
+    int x,
+    int y,
+    double fontSize,
+    Color color,
+    double opacity,
+    double rotation, // in radians
+  ) async {
+    try {
+      // Render text to image
+      final textImage = await _renderTextToImage(
+        text,
+        fontSize,
+        color,
+        opacity,
+      );
+      if (textImage == null) {
+        log('Warning: Failed to render text image');
+        return;
+      }
+
+      if (textImage.width == 0 || textImage.height == 0) {
+        log('Warning: Text image has zero dimensions');
+        return;
+      }
+
+      // Apply rotation if needed
+      img.Image rotatedText = textImage;
+      if (rotation.abs() > 0.01) {
+        rotatedText = img.copyRotate(
+          textImage,
+          angle: rotation * 180 / 3.14159,
+        );
+      }
+
+      // Calculate position for centering the text
+      final dstX = (x - rotatedText.width ~/ 2);
+      final dstY = (y - rotatedText.height ~/ 2);
+
+      // Composite the text image onto the main image
+      // Allow negative positions to ensure full coverage
+      img.compositeImage(image, rotatedText, dstX: dstX, dstY: dstY);
+
+      log(
+        'Watermark applied at ($dstX, $dstY) with size ${rotatedText.width}x${rotatedText.height}',
+      );
+    } catch (e, stackTrace) {
+      log('Error drawing text on image: $e');
+      log('Stack trace: $stackTrace');
     }
   }
 
@@ -642,7 +866,9 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       // Re-verify file exists and get the actual file path
       File? actualFile = _selectedFile;
       if (!await actualFile!.exists()) {
-        log('Preview: File does not exist at ${actualFile.path}, trying to find it...');
+        log(
+          'Preview: File does not exist at ${actualFile.path}, trying to find it...',
+        );
         // Try to find the file again
         await _checkAndSetFile(actualFile.path);
         actualFile = _selectedFile;
@@ -652,18 +878,61 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         }
       }
 
-      // Copy file to temp directory first to ensure watermark_unique can access it
+      // Read image to get dimensions
+      log('Preview: Reading file from ${actualFile.path}');
+      final inputBytes = await actualFile.readAsBytes();
+
+      if (inputBytes.isEmpty) {
+        log('Preview: File is empty');
+        return null;
+      }
+
+      final inputImage = img.decodeImage(inputBytes);
+
+      if (inputImage == null) {
+        log('Preview: Failed to decode image');
+        return null;
+      }
+
+      // Create a copy for watermarking
+      final watermarkedImage = img.copyResize(
+        inputImage,
+        width: inputImage.width,
+        height: inputImage.height,
+      );
+
+      final imageWidth = watermarkedImage.width;
+      final imageHeight = watermarkedImage.height;
+      log('Preview: Image dimensions ${imageWidth}x$imageHeight');
+
+      // Calculate center position for preview
+      final minDimension = imageWidth < imageHeight ? imageWidth : imageHeight;
+      final textSize = (minDimension * 0.08).round().clamp(30, 150).toDouble();
+      final centerX = (imageWidth / 2).round();
+      final centerY = (imageHeight / 2).round();
+
+      // Draw watermark at center for preview
+      await _drawTextOnImage(
+        watermarkedImage,
+        _watermarkTextController.text.trim(),
+        centerX,
+        centerY,
+        textSize,
+        _watermarkColor,
+        _watermarkOpacity,
+        0, // No rotation for preview
+      );
+
+      // Save preview to temp file
       final tempDir = await getTemporaryDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final tempInputPath = '${tempDir.path}/temp_input_$timestamp.jpg';
       final previewPath = '${tempDir.path}/preview_$timestamp.jpg';
 
-      // Clean up old preview and temp files
+      // Clean up old preview files
       try {
         final dir = Directory(tempDir.path);
         await for (var entity in dir.list()) {
-          if (entity is File && 
-              (entity.path.contains('preview_') || entity.path.contains('temp_input_'))) {
+          if (entity is File && entity.path.contains('preview_')) {
             try {
               await entity.delete();
             } catch (e) {
@@ -675,89 +944,23 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         // Ignore cleanup errors
       }
 
-      // Read image to get dimensions
-      log('Preview: Reading file from ${actualFile.path}');
-      final inputBytes = await actualFile.readAsBytes();
-      
-      if (inputBytes.isEmpty) {
-        log('Preview: File is empty');
-        return null;
-      }
+      // Encode and save
+      final previewBytes = img.encodeJpg(watermarkedImage, quality: 75);
+      final previewFile = File(previewPath);
+      await previewFile.writeAsBytes(previewBytes);
 
-      // Copy to temp location for watermark_unique to access
-      final tempInputFile = File(tempInputPath);
-      await tempInputFile.writeAsBytes(inputBytes);
-      
-      if (!await tempInputFile.exists()) {
-        log('Preview: Failed to create temp file');
-        return null;
-      }
-
-      final inputImage = img.decodeImage(inputBytes);
-      
-      if (inputImage == null) {
-        log('Preview: Failed to decode image');
-        return null;
-      }
-
-      final imageWidth = inputImage.width;
-      final imageHeight = inputImage.height;
-      log('Preview: Image dimensions ${imageWidth}x$imageHeight');
-
-      // Calculate center position for preview
-      final textSize = (imageWidth * 0.1).round().clamp(40, 200);
-      final centerX = (imageWidth / 2).round();
-      final centerY = (imageHeight / 2).round();
-
-      // Apply opacity to color
-      final colorWithOpacity = Color.fromRGBO(
-        _watermarkColor.red,
-        _watermarkColor.green,
-        _watermarkColor.blue,
-        _watermarkOpacity,
-      );
-
-      // Use watermark_unique to create preview (single watermark at center for preview)
-      // Use the temp file path which we know exists
-      log('Preview: Applying watermark at ($centerX, $centerY) using temp file: $tempInputPath');
-      final WatermarkUnique watermarkUnique = WatermarkUnique();
-      final result = await watermarkUnique.addTextWatermark(
-        filePath: tempInputPath,
-        text: _watermarkTextController.text.trim(),
-        x: centerX,
-        y: centerY,
-        textSize: textSize,
-        color: colorWithOpacity,
-        backgroundTextColor: Colors.transparent,
-        quality: 75, // Lower quality for preview
-        imageFormat: ImageFormat.jpeg,
-      );
-
-      // Clean up temp input file
-      try {
-        await tempInputFile.delete();
-      } catch (e) {
-        // Ignore deletion errors
-      }
-
-      if (result != null && result.isNotEmpty) {
-        final resultFile = File(result);
-        if (await resultFile.exists()) {
-          // Verify file is not empty
-          final fileSize = await resultFile.length();
-          if (fileSize > 0) {
-            // Copy to preview path
-            await resultFile.copy(previewPath);
-            log('Preview created successfully: $previewPath (size: $fileSize bytes)');
-            return previewPath;
-          } else {
-            log('Preview: Result file is empty');
-          }
+      if (await previewFile.exists()) {
+        final fileSize = await previewFile.length();
+        if (fileSize > 0) {
+          log(
+            'Preview created successfully: $previewPath (size: $fileSize bytes)',
+          );
+          return previewPath;
         } else {
-          log('Preview: Result file does not exist: $result');
+          log('Preview: Result file is empty');
         }
       } else {
-        log('Preview: Watermark operation returned null');
+        log('Preview: Failed to create preview file');
       }
     } catch (e, stackTrace) {
       log('Preview watermark error: $e');
@@ -766,17 +969,218 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     return null;
   }
 
-  Widget _buildColorOption(Color color) {
+  Future<String?> _createPreviewPDFWatermark() async {
+    if (_selectedFile == null || _watermarkTextController.text.trim().isEmpty) {
+      return null;
+    }
+
+    try {
+      // Re-verify file exists and get the actual file path
+      File? actualFile = _selectedFile;
+      if (!await actualFile!.exists()) {
+        log(
+          'Preview PDF: File does not exist at ${actualFile.path}, trying to find it...',
+        );
+        // Try to find the file again
+        await _checkAndSetFile(actualFile.path);
+        actualFile = _selectedFile;
+        if (actualFile == null || !await actualFile.exists()) {
+          log('Preview PDF: Could not find file');
+          return null;
+        }
+      }
+
+      // Read PDF file
+      log('Preview PDF: Reading file from ${actualFile.path}');
+      final inputBytes = await actualFile.readAsBytes();
+
+      if (inputBytes.isEmpty) {
+        log('Preview PDF: File is empty');
+        return null;
+      }
+
+      final PdfDocument document = PdfDocument(inputBytes: inputBytes);
+      final totalPages = document.pages.count;
+      if (totalPages == 0) {
+        document.dispose();
+        log('Preview PDF: PDF has no pages');
+        return null;
+      }
+
+      log('Preview PDF: Processing $totalPages pages');
+
+      // Apply watermarks to ALL pages
+      for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+        final PdfPage page = document.pages[pageIndex];
+        final PdfGraphics graphics = page.graphics;
+
+        // Get page dimensions
+        final double pageWidth = page.size.width;
+        final double pageHeight = page.size.height;
+
+        // Calculate font size based on page dimensions
+        final minDimension = pageWidth < pageHeight ? pageWidth : pageHeight;
+        final fontSize = (minDimension * 0.08).clamp(20.0, 80.0);
+
+        // Create font for watermark
+        final PdfFont font = PdfStandardFont(
+          PdfFontFamily.helvetica,
+          fontSize,
+          style: PdfFontStyle.bold,
+        );
+
+        // Set transparency
+        graphics.setTransparency(_watermarkOpacity);
+
+        // Create brush with watermark color
+        final brush = PdfSolidBrush(
+          PdfColor(
+            _watermarkColor.red,
+            _watermarkColor.green,
+            _watermarkColor.blue,
+          ),
+        );
+
+        // Calculate diagonal positions for this page
+        final positions = _calculateDiagonalPositions(
+          pageWidth.toInt(),
+          pageHeight.toInt(),
+          fontSize.toInt(),
+        );
+
+        // Filter positions to ensure full page coverage
+        final validPositions = positions.where((pos) {
+          final x = pos['x'] as int;
+          final y = pos['y'] as int;
+          return x >= -pageWidth.toInt() * 0.5 &&
+              x < pageWidth.toInt() * 1.5 &&
+              y >= -pageHeight.toInt() * 0.5 &&
+              y < pageHeight.toInt() * 1.5;
+        }).toList();
+
+        // Rotation angle for diagonal watermarks (-45 degrees)
+        const double rotationAngle = -45.0;
+
+        // Add watermarks at calculated positions
+        for (final pos in validPositions) {
+          final x = pos['x'] as int;
+          final y = pos['y'] as int;
+
+          try {
+            // Save graphics state
+            graphics.save();
+
+            // Translate to position
+            graphics.translateTransform(x.toDouble(), y.toDouble());
+
+            // Rotate for diagonal watermark
+            graphics.rotateTransform(rotationAngle);
+
+            // Measure text to center it
+            final PdfStringFormat format = PdfStringFormat(
+              alignment: PdfTextAlignment.center,
+            );
+            final Size textSize = font.measureString(
+              _watermarkTextController.text.trim(),
+              format: format,
+            );
+
+            // Draw watermark text
+            graphics.drawString(
+              _watermarkTextController.text.trim(),
+              font,
+              brush: brush,
+              bounds: Rect.fromLTWH(
+                -textSize.width / 2,
+                -textSize.height / 2,
+                textSize.width,
+                textSize.height,
+              ),
+              format: format,
+            );
+
+            // Restore graphics state
+            graphics.restore();
+          } catch (e) {
+            log('Error adding watermark at position on page ${pageIndex + 1}: $e');
+            // Continue with remaining watermarks
+          }
+        }
+      }
+
+      // Save preview PDF to temp file
+      final tempDir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final previewPath = '${tempDir.path}/preview_pdf_$timestamp.pdf';
+
+      // Clean up old preview PDF files
+      try {
+        final dir = Directory(tempDir.path);
+        await for (var entity in dir.list()) {
+          if (entity is File && entity.path.contains('preview_pdf_')) {
+            try {
+              await entity.delete();
+            } catch (e) {
+              // Ignore deletion errors
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      // Save the preview PDF
+      final List<int> pdfBytes = await document.save();
+      document.dispose();
+
+      if (pdfBytes.isEmpty) {
+        log('Preview PDF: Generated PDF bytes are empty');
+        return null;
+      }
+
+      log('Preview PDF: Saving ${pdfBytes.length} bytes to $previewPath');
+
+      final previewFile = File(previewPath);
+      await previewFile.writeAsBytes(pdfBytes);
+
+      // Wait a moment for file system to sync
+      await Future.delayed(const Duration(milliseconds: 150));
+
+      if (await previewFile.exists()) {
+        final fileSize = await previewFile.length();
+        if (fileSize > 0) {
+          log(
+            'Preview PDF created successfully: $previewPath (size: $fileSize bytes)',
+          );
+          return previewPath;
+        } else {
+          log('Preview PDF: Result file is empty');
+        }
+      } else {
+        log('Preview PDF: Failed to create preview file');
+      }
+    } catch (e, stackTrace) {
+      log('Preview PDF watermark error: $e');
+      log('Stack trace: $stackTrace');
+    }
+    return null;
+  }
+
+  Widget _buildColorOption(Color color, [StateSetter? modalStateSetter]) {
     final isSelected = _watermarkColor.value == color.value;
     return GestureDetector(
       onTap: () {
+        // Update both modal state and main state
+        if (modalStateSetter != null) {
+          modalStateSetter(() {
+            _watermarkColor = color;
+          });
+        }
         setState(() {
           _watermarkColor = color;
         });
-        // Update preview after color change
-        Future.delayed(const Duration(milliseconds: 100), () {
-          _updatePreview();
-        });
+        // Update preview immediately after color change
+        _updatePreview();
       },
       child: Container(
         width: 40,
@@ -880,13 +1284,15 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         log('File does not exist, trying to find it...');
         await _checkAndSetFile(_selectedFile!.path);
         if (_selectedFile == null || !await _selectedFile!.exists()) {
-          throw Exception('File not found: ${_selectedFile?.path ?? "unknown"}');
+          throw Exception(
+            'File not found: ${_selectedFile?.path ?? "unknown"}',
+          );
         }
       }
 
       final inputPath = _selectedFile!.path;
       log('Starting watermark application for: $inputPath');
-      
+
       // Get file extension
       final extension = inputPath.split('.').last.toLowerCase();
       final watermarkText = _watermarkTextController.text.trim();
@@ -913,60 +1319,152 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         throw Exception('Unsupported file type: $extension');
       }
 
-      setState(() {
+        setState(() {
         _progress = 0.8;
       });
 
       // Validate output
       if (outputBytes == null || outputBytes.isEmpty) {
-        throw Exception('Failed to generate watermarked file - output is empty');
+        throw Exception(
+          'Failed to generate watermarked file - output is empty',
+        );
       }
 
-      log('Watermark applied successfully, saving to database...');
+      log('Watermark applied successfully, updating existing document...');
 
-      // Generate title from original filename
-      final originalFileName = _selectedFile!.path.split('/').last;
-      final fileNameWithoutExt = originalFileName.contains('.')
-          ? originalFileName.substring(0, originalFileName.lastIndexOf('.'))
-          : originalFileName;
-      final title = '${fileNameWithoutExt}_Watermarked';
-
-      // Save using file storage service - this creates a NEW database entry
-      final fileStorageService = FileStorageService.instance;
-      int? docId;
-      
       setState(() {
         _progress = 0.9;
       });
 
       try {
-      if (fileType == 'image') {
-        docId = await fileStorageService.saveImageFile(
-          imageBytes: outputBytes,
-            fileName: 'watermarked_${DateTime.now().millisecondsSinceEpoch}.$extension',
-            title: title,
-        );
-      } else if (fileType == 'pdf') {
-        docId = await fileStorageService.savePDFFile(
-          pdfBytes: outputBytes,
-            fileName: 'watermarked_${DateTime.now().millisecondsSinceEpoch}.$extension',
-            title: title,
+        // Find the existing document by the initial file path
+        Document? existingDocument;
+        if (widget.initialFilePath != null) {
+          // Try to find document by image path
+          final allDocuments = await DatabaseHelper.instance.getAllDocuments();
+          final initialPath = widget.initialFilePath!;
+          final initialFileName = initialPath.split('/').last;
+
+          // First try exact match
+          try {
+            existingDocument = allDocuments.firstWhere(
+              (doc) => doc.imagePath == initialPath,
+            );
+          } catch (e) {
+            log('Exact path match not found, trying filename match...');
+            // If not found, try by filename
+            try {
+              existingDocument = allDocuments.firstWhere((doc) {
+                final docFileName = doc.imagePath.split('/').last;
+                return docFileName == initialFileName ||
+                    doc.imagePath.endsWith(initialFileName) ||
+                    initialPath.endsWith(docFileName);
+              });
+            } catch (e2) {
+              log('Could not find document by filename: $e2');
+            }
+          }
+        }
+
+        if (existingDocument == null || existingDocument.id == null) {
+          throw Exception(
+            'Could not find existing document to update. Please ensure the file was imported from the app.',
           );
         }
 
-        if (docId == null) {
-          throw Exception('Failed to save watermarked file to database - docId is null');
+        log(
+          'Found existing document with ID: ${existingDocument.id}, Title: ${existingDocument.title}',
+        );
+
+        // Save watermarked file to the same location or generate new path
+      final fileStorageService = FileStorageService.instance;
+        String newFilePath;
+        String? newThumbnailPath;
+      
+      if (fileType == 'image') {
+          // Save image file
+          final imagesDir = await fileStorageService.getImagesDirectory();
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final fileName = 'img_$timestamp.$extension';
+          newFilePath = '${imagesDir.path}/$fileName';
+
+          // Write the watermarked image
+          final file = File(newFilePath);
+          await file.writeAsBytes(outputBytes);
+
+          // Generate new thumbnail
+          final thumbnailBytes = await fileStorageService
+              .generateImageThumbnail(outputBytes);
+          if (thumbnailBytes != null) {
+            final thumbPath = '${imagesDir.path}/thumb_$timestamp.jpg';
+            final thumbFile = File(thumbPath);
+            await thumbFile.writeAsBytes(thumbnailBytes);
+            newThumbnailPath = thumbPath;
+          }
+      } else if (fileType == 'pdf') {
+          // Save PDF file
+          final pdfDir = await fileStorageService.getPDFDirectory();
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final fileName = 'pdf_$timestamp.$extension';
+          newFilePath = '${pdfDir.path}/$fileName';
+
+          // Write the watermarked PDF
+          final file = File(newFilePath);
+          await file.writeAsBytes(outputBytes);
+        } else {
+          throw Exception('Unsupported file type: $fileType');
         }
 
-        log('File saved to database with ID: $docId');
+        log('Watermarked file saved to: $newFilePath');
 
-      // Get saved file path from database
-        final document = await DatabaseHelper.instance.getDocumentById(docId);
-        if (document == null) {
-          throw Exception('Document was not found in database after saving');
+        // Update the existing document with new path, keeping all other fields the same
+        final updatedDocument = Document(
+          id: existingDocument.id,
+          title: existingDocument.title, // Keep original title
+          type: existingDocument.type, // Keep original type
+          isFavourite: existingDocument.isFavourite, // Keep favourite status
+          imagePath: newFilePath, // Update only the path
+          thumbnailPath:
+              newThumbnailPath ??
+              existingDocument.thumbnailPath, // Update thumbnail if available
+          createdAt: existingDocument.createdAt, // Keep original creation date
+          updatedAt: DateTime.now(), // Update the updated_at timestamp
+          tagId: existingDocument.tagId, // Keep original tag
+          isDeleted: existingDocument.isDeleted, // Keep deletion status
+          deletedAt: existingDocument.deletedAt, // Keep deletion date if any
+        );
+
+        // Update document in database directly in Documents table
+        final dbHelper = DatabaseHelper.instance;
+        final db = await dbHelper.database;
+        final updateMap = updatedDocument.toMap();
+        // Remove id from update map as it's the primary key
+        updateMap.remove('id');
+
+        try {
+          final updateCount = await db.update(
+            'Documents',
+            updateMap,
+            where: 'id = ?',
+            whereArgs: [existingDocument.id],
+          );
+
+          if (updateCount == 0) {
+            log(
+              'Warning: Document update returned 0 rows updated, trying fallback method',
+            );
+            // Try using the updateDocument method as fallback (for old group structure)
+            await dbHelper.updateDocument(updatedDocument);
+          } else {
+            log('Document updated successfully: $updateCount row(s) updated');
+          }
+        } catch (e) {
+          log('Error updating document in Documents table: $e');
+          // Fallback to updateDocument method
+          await dbHelper.updateDocument(updatedDocument);
         }
 
-        log('Document retrieved from database: ${document.imagePath}');
+        log('Document updated successfully with new path: $newFilePath');
         
         // Refresh home screen documents
         if (mounted) {
@@ -977,7 +1475,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       setState(() {
         _progress = 1.0;
         _isProcessing = false;
-          _outputPath = document.imagePath;
+          _outputPath = newFilePath;
       });
 
       if (mounted) {
@@ -986,9 +1484,10 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
             content: Text('Watermark applied successfully!'),
             backgroundColor: Colors.green,
               duration: Duration(seconds: 2),
-          ),
-        );
-      }
+            ),
+          );
+          Get.back();
+        }
       } catch (saveError) {
         log('Error saving to database: $saveError');
         throw Exception('Failed to save watermarked file: $saveError');
@@ -996,7 +1495,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     } catch (e, stackTrace) {
       log('Error in _applyWatermark: $e');
       log('Stack trace: $stackTrace');
-      
+
       setState(() {
         _isProcessing = false;
       });
@@ -1007,7 +1506,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         if (errorMessage.startsWith('Exception: ')) {
           errorMessage = errorMessage.substring(11);
         }
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -1025,9 +1524,7 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
                   context: context,
                   builder: (context) => AlertDialog(
                     title: const Text('Error Details'),
-                    content: SingleChildScrollView(
-                      child: Text(errorMessage),
-                    ),
+                    content: SingleChildScrollView(child: Text(errorMessage)),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(context),
@@ -1051,14 +1548,14 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
 
     try {
       log('Starting image watermarking: $inputPath');
-      
+
       // Verify input file exists
       final inputFile = File(inputPath);
       if (!await inputFile.exists()) {
         throw Exception('Input file does not exist: $inputPath');
       }
 
-      // Read input image to get dimensions for positioning
+      // Read input image
       final inputBytes = await inputFile.readAsBytes();
       if (inputBytes.isEmpty) {
         throw Exception('Input file is empty');
@@ -1073,65 +1570,53 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         _progress = 0.5;
       });
 
-      // Calculate image dimensions
-      final imageWidth = inputImage.width;
-      final imageHeight = inputImage.height;
-      log('Image dimensions: ${imageWidth}x$imageHeight');
-
-      // Calculate text size based on image dimensions (10% of width, clamped)
-      final textSize = (imageWidth * 0.1).round().clamp(40, 200);
-      log('Calculated text size: $textSize');
-
-      // Apply opacity to color
-      final colorWithOpacity = Color.fromRGBO(
-        _watermarkColor.red,
-        _watermarkColor.green,
-        _watermarkColor.blue,
-        _watermarkOpacity,
+      // Create a copy for watermarking
+      final watermarkedImage = img.copyResize(
+        inputImage,
+        width: inputImage.width,
+        height: inputImage.height,
       );
 
-      // Copy file to temp directory first to ensure watermark_unique can access it
-      final tempDir = await getTemporaryDirectory();
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final tempInputPath = '${tempDir.path}/watermark_input_$timestamp.jpg';
-      final tempInputFile = File(tempInputPath);
-      
-      // Write input bytes to temp file
-      await tempInputFile.writeAsBytes(inputBytes);
-      
-      if (!await tempInputFile.exists()) {
-        throw Exception('Failed to create temp input file');
-      }
+      // Calculate image dimensions
+      final imageWidth = watermarkedImage.width;
+      final imageHeight = watermarkedImage.height;
+      log('Image dimensions: ${imageWidth}x$imageHeight');
 
-      log('Created temp input file: $tempInputPath');
-
-      // Use watermark_unique to add text watermark
-      // Use diagonal pattern with multiple watermarks
-      final WatermarkUnique watermarkUnique = WatermarkUnique();
-      String currentPath = tempInputPath;
-      int watermarkCount = 0;
-      const int maxWatermarks = 8; // Reduced for better performance
-      final List<String> tempFilesToCleanup = [tempInputPath]; // Track all temp files
+      // Calculate text size based on image dimensions
+      // Use a percentage of the smaller dimension for better visibility
+      final minDimension = imageWidth < imageHeight ? imageWidth : imageHeight;
+      final textSize = (minDimension * 0.08).round().clamp(30, 150).toDouble();
+      log(
+        'Calculated text size: $textSize (image: ${imageWidth}x$imageHeight)',
+      );
 
       // Calculate diagonal positions
       final positions = _calculateDiagonalPositions(
         imageWidth,
         imageHeight,
-        textSize,
+        textSize.round(),
       );
 
-      // Limit positions and filter to valid ones (within image bounds)
-      final validPositions = positions
-          .where((pos) {
-            final x = pos['x'] as int;
-            final y = pos['y'] as int;
-            return x >= -imageWidth && x < imageWidth * 2 &&
-                   y >= -imageHeight && y < imageHeight * 2;
-          })
-          .take(maxWatermarks)
-          .toList();
+      // Filter positions to ensure full image coverage
+      final validPositions = positions.where((pos) {
+        final x = pos['x'] as int;
+        final y = pos['y'] as int;
+        // Include positions that will be visible on the image
+        // Allow positions slightly outside bounds for full coverage
+        return x >= -imageWidth * 0.5 &&
+            x < imageWidth * 1.5 &&
+            y >= -imageHeight * 0.5 &&
+            y < imageHeight * 1.5;
+      }).toList();
+
+      log(
+        'Calculated ${validPositions.length} watermark positions for full coverage',
+      );
 
       log('Adding ${validPositions.length} watermarks...');
+
+      // Rotation angle for diagonal watermarks (-45 degrees)
+      const double rotationAngle = -0.785398; // -45 degrees in radians
 
       // Add watermarks at calculated positions
       for (int i = 0; i < validPositions.length; i++) {
@@ -1140,165 +1625,59 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         final y = pos['y'] as int;
 
         try {
-          log('Adding watermark ${i + 1}/${validPositions.length} at position ($x, $y)');
-          
-          // Verify current file exists before watermarking
-          final currentFile = File(currentPath);
-          if (!await currentFile.exists()) {
-            log('Current file does not exist: $currentPath');
-            // Try to use the last known good file
-            if (tempFilesToCleanup.length > 1) {
-              // Use the previous result file
-              currentPath = tempFilesToCleanup.last;
-              log('Using previous result file: $currentPath');
-              if (!await File(currentPath).exists()) {
-                throw Exception('Previous result file also does not exist: $currentPath');
-              }
-            } else {
-              throw Exception('Current file does not exist: $currentPath');
-            }
-          }
-
-          log('Using file: $currentPath for watermark ${i + 1}');
-
-          final result = await watermarkUnique.addTextWatermark(
-            filePath: currentPath,
-            text: text,
-            x: x,
-            y: y,
-            textSize: textSize,
-            color: colorWithOpacity,
-            backgroundTextColor: Colors.transparent,
-            quality: 90, // Higher quality for final output
-            imageFormat: ImageFormat.jpeg,
+          log(
+            'Adding watermark ${i + 1}/${validPositions.length} at position ($x, $y)',
           );
 
-          if (result != null && result.isNotEmpty) {
-            final resultFile = File(result);
-            // Wait a bit for file system to sync
-            await Future.delayed(const Duration(milliseconds: 100));
-            
-            if (await resultFile.exists()) {
-              // Verify the file is not empty
-              final fileSize = await resultFile.length();
-              if (fileSize > 0) {
-                // Copy result to a new temp file to ensure it persists
-                final newTempPath = '${tempDir.path}/watermark_step_${i + 1}_$timestamp.jpg';
-                await resultFile.copy(newTempPath);
-                
-                // Verify the copy exists
-                final copiedFile = File(newTempPath);
-                if (await copiedFile.exists()) {
-                  // Update current path to the copied file
-                  currentPath = newTempPath;
-                  tempFilesToCleanup.add(newTempPath);
-                  watermarkCount++;
-                  log('Watermark ${i + 1} added successfully (file size: $fileSize bytes, copied to: $newTempPath)');
-                } else {
-                  log('Warning: Failed to copy result file to: $newTempPath');
-                  if (i == 0) {
-                    throw Exception('Failed to copy watermarked file');
-                  }
-                  continue;
-                }
-              } else {
-                log('Warning: Watermarked file is empty at: $result');
-                if (i == 0) {
-                  throw Exception('Watermarked file is empty');
-                }
-                continue;
-              }
-            } else {
-              log('Warning: Watermarked file not found at: $result');
-              if (i == 0) {
-                throw Exception('Watermarked file was not created');
-              }
-              continue;
-            }
-          } else {
-            log('Warning: Watermark operation returned null for position $i');
-            if (i == 0) {
-              throw Exception('Watermark operation failed - returned null');
-            }
-            continue;
-          }
+          // Draw watermark with rotation
+          await _drawTextOnImage(
+            watermarkedImage,
+            text,
+            x,
+            y,
+            textSize,
+            _watermarkColor,
+            _watermarkOpacity,
+            rotationAngle,
+      );
 
-          setState(() {
+      setState(() {
             _progress = 0.5 + (0.3 * (i + 1) / validPositions.length);
           });
         } catch (e) {
           log('Error adding watermark at position $i: $e');
           if (i == 0) {
-            // If first watermark fails, throw error
             throw Exception('Failed to apply watermark: $e');
           }
-          // For subsequent positions, continue but log warning
-          log('Continuing with remaining watermarks...');
+          // Continue with remaining watermarks
         }
       }
 
-      if (watermarkCount == 0) {
-        // Clean up temp files
-        for (final tempPath in tempFilesToCleanup) {
-          try {
-            final file = File(tempPath);
-            if (await file.exists()) {
-              await file.delete();
-            }
-          } catch (e) {
-            // Ignore deletion errors
-          }
-        }
-        throw Exception('Failed to add any watermarks');
-      }
-
-      log('Successfully added $watermarkCount/${validPositions.length} watermarks');
-
-      setState(() {
+          setState(() {
         _progress = 0.9;
       });
 
-      // Verify final file exists and read it
-      final finalFile = File(currentPath);
-      if (!await finalFile.exists()) {
-        // Clean up temp files
-        for (final tempPath in tempFilesToCleanup) {
-          try {
-            final file = File(tempPath);
-            if (await file.exists()) {
-              await file.delete();
-            }
-          } catch (e) {
-            // Ignore deletion errors
-          }
-        }
-        throw Exception('Final watermarked file does not exist: $currentPath');
+      // Determine output format based on input
+      final extension = inputPath.split('.').last.toLowerCase();
+      Uint8List outputBytes;
+
+      if (extension == 'png') {
+        outputBytes = Uint8List.fromList(img.encodePng(watermarkedImage));
+      } else {
+        // Default to JPEG for jpg, jpeg, webp, etc.
+        outputBytes = Uint8List.fromList(
+          img.encodeJpg(watermarkedImage, quality: 90),
+        );
       }
 
-      final fileSize = await finalFile.length();
-      if (fileSize == 0) {
-        throw Exception('Watermarked file is empty');
-      }
-
-      final outputBytes = await finalFile.readAsBytes();
       if (outputBytes.isEmpty) {
-        throw Exception('Watermarked file is empty');
+        throw Exception('Failed to encode watermarked image');
       }
 
-      // Clean up all temp files after reading
-      for (final tempPath in tempFilesToCleanup) {
-        try {
-          final file = File(tempPath);
-          if (await file.exists()) {
-            await file.delete();
-          }
-        } catch (e) {
-          // Ignore deletion errors
-        }
-      }
-
-      log('Watermarked image created successfully, size: ${outputBytes.length} bytes');
-      return Uint8List.fromList(outputBytes);
+      log(
+        'Watermarked image created successfully, size: ${outputBytes.length} bytes',
+      );
+      return outputBytes;
     } catch (e, stackTrace) {
       log('Error in _watermarkImage: $e');
       log('Stack trace: $stackTrace');
@@ -1312,15 +1691,33 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     int textSize,
   ) {
     final positions = <Map<String, int>>[];
-    final spacing = textSize * 2;
+    // Calculate spacing with more space between watermarks
+    // Increase multiplier to add more space between text instances
+    // Consider both horizontal and vertical spacing for diagonal pattern
+    final baseSpacing =
+        textSize * 3.0; // Increased from 1.5 to 3.0 for more space
+    final spacing = baseSpacing.round().clamp(
+      100,
+      400,
+    ); // Increased min from 50 to 100
 
-    // Create diagonal pattern from bottom-left to top-right
-    for (int y = height; y > -spacing; y -= spacing) {
-      for (int x = -width; x < width * 2; x += spacing) {
+    // Create diagonal pattern covering the entire image
+    // Start from outside the image bounds to ensure full coverage
+    final startY = height + spacing;
+    final endY = -spacing;
+    final startX = -width - spacing;
+    final endX = width * 2 + spacing;
+
+    // Create diagonal grid pattern with increased spacing
+    for (int y = startY; y >= endY; y -= spacing) {
+      for (int x = startX; x <= endX; x += spacing) {
         positions.add({'x': x, 'y': y});
       }
     }
 
+    log(
+      'Calculated spacing: $spacing (textSize: $textSize) for ${positions.length} positions',
+    );
     return positions;
   }
 
@@ -1329,10 +1726,8 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     String outputPath,
     String text,
   ) async {
-    // watermark_unique doesn't support video, so we'll skip it
-    throw Exception(
-      'Video watermarking not supported with watermark_unique package',
-    );
+    // Video watermarking not supported
+    throw Exception('Video watermarking is not supported');
   }
 
   Future<Uint8List?> _watermarkPDF(String inputPath, String text) async {
@@ -1341,52 +1736,126 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
     });
 
     try {
+      log('Starting PDF watermarking: $inputPath');
+
       // Read the PDF file
       final inputBytes = await File(inputPath).readAsBytes();
+      if (inputBytes.isEmpty) {
+        throw Exception('Input PDF file is empty');
+      }
+
       final PdfDocument document = PdfDocument(inputBytes: inputBytes);
+      final totalPages = document.pages.count;
+      log('PDF has $totalPages pages');
 
       setState(() {
         _progress = 0.5;
       });
 
-      // Add watermark to all pages
-      for (int i = 0; i < document.pages.count; i++) {
-        final PdfPage page = document.pages[i];
+      // Add watermark to all pages with diagonal pattern
+      for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+        final PdfPage page = document.pages[pageIndex];
         final PdfGraphics graphics = page.graphics;
 
         // Get page dimensions
         final double pageWidth = page.size.width;
         final double pageHeight = page.size.height;
+        log('Page ${pageIndex + 1}: ${pageWidth}x$pageHeight');
+
+        // Calculate font size based on page dimensions (similar to images)
+        final minDimension = pageWidth < pageHeight ? pageWidth : pageHeight;
+        final fontSize = (minDimension * 0.08).clamp(20.0, 80.0);
+        log('Calculated font size: $fontSize for page ${pageIndex + 1}');
 
         // Create font for watermark
-        final PdfFont font = PdfStandardFont(PdfFontFamily.helvetica, 48);
+        final PdfFont font = PdfStandardFont(
+          PdfFontFamily.helvetica,
+          fontSize,
+          style: PdfFontStyle.bold,
+        );
+
+        // Calculate diagonal positions for this page
+        final positions = _calculateDiagonalPositions(
+          pageWidth.toInt(),
+          pageHeight.toInt(),
+          fontSize.toInt(),
+        );
+
+        // Filter positions to ensure full page coverage
+        final validPositions = positions.where((pos) {
+          final x = pos['x'] as int;
+          final y = pos['y'] as int;
+          return x >= -pageWidth.toInt() * 0.5 &&
+              x < pageWidth.toInt() * 1.5 &&
+              y >= -pageHeight.toInt() * 0.5 &&
+              y < pageHeight.toInt() * 1.5;
+        }).toList();
+
+        log(
+          'Page ${pageIndex + 1}: Adding ${validPositions.length} watermarks',
+        );
+
+        // Set transparency for all watermarks on this page
+        graphics.setTransparency(_watermarkOpacity);
+
+        // Create brush with watermark color
+        final brush = PdfSolidBrush(
+          PdfColor(
+            _watermarkColor.red,
+            _watermarkColor.green,
+            _watermarkColor.blue,
+          ),
+        );
+
+        // Rotation angle for diagonal watermarks (-45 degrees)
+        const double rotationAngle = -0.785398; // -45 degrees in radians
+
+        // Add watermarks at calculated positions
+        for (int i = 0; i < validPositions.length; i++) {
+          final pos = validPositions[i];
+          final x = pos['x'] as int;
+          final y = pos['y'] as int;
+
+          try {
+            // Save graphics state
+            graphics.save();
+
+            // Translate to position
+            graphics.translateTransform(x.toDouble(), y.toDouble());
+
+            // Rotate for diagonal watermark
+            graphics.rotateTransform(rotationAngle * 180 / 3.14159);
+
+            // Measure text to center it
         final PdfStringFormat format = PdfStringFormat(
           alignment: PdfTextAlignment.center,
         );
-
-        // Calculate text size
         final Size textSize = font.measureString(text, format: format);
-        final double x = (pageWidth - textSize.width) / 2;
-        final double y = (pageHeight - textSize.height) / 2;
 
-        // Draw watermark with specified color and opacity
-        graphics.setTransparency(_watermarkOpacity);
+            // Draw watermark text
         graphics.drawString(
           text,
           font,
-          brush: PdfSolidBrush(
-            PdfColor(
-              _watermarkColor.red,
-              _watermarkColor.green,
-              _watermarkColor.blue,
-            ),
-          ),
-          bounds: Rect.fromLTWH(x, y, textSize.width, textSize.height),
+              brush: brush,
+              bounds: Rect.fromLTWH(
+                -textSize.width / 2,
+                -textSize.height / 2,
+                textSize.width,
+                textSize.height,
+              ),
           format: format,
         );
 
+            // Restore graphics state
+            graphics.restore();
+          } catch (e) {
+            log('Error adding watermark at position $i on page ${pageIndex + 1}: $e');
+            // Continue with remaining watermarks
+          }
+        }
+
         setState(() {
-          _progress = 0.5 + (0.3 * (i + 1) / document.pages.count);
+          _progress = 0.5 + (0.4 * (pageIndex + 1) / totalPages);
         });
       }
 
@@ -1402,15 +1871,23 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
         _progress = 0.98;
       });
 
+      if (bytes.isEmpty) {
+        throw Exception('Failed to generate watermarked PDF - output is empty');
+      }
+
+      log(
+        'Watermarked PDF created successfully, size: ${bytes.length} bytes',
+      );
       return Uint8List.fromList(bytes);
-    } catch (e) {
-      // If PDF library fails, show error - PDF watermarking should use PDF library
+    } catch (e, stackTrace) {
+      log('Error in _watermarkPDF: $e');
+      log('Stack trace: $stackTrace');
       throw Exception(
         'PDF watermarking failed: $e. Please ensure the PDF file is valid.',
-      );
+        );
+      }
     }
   }
-}
 
 // Custom painter for watermark preview overlay
 class _WatermarkPainter extends CustomPainter {
@@ -1456,4 +1933,3 @@ class _WatermarkPainter extends CustomPainter {
     return text != oldDelegate.text || color != oldDelegate.color;
   }
 }
-

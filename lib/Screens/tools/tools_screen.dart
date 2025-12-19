@@ -3,6 +3,7 @@ import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Services/photo_editor_service.dart';
 import '../../Services/document_scan_serivce.dart';
+import '../../Services/pdf_compression_service.dart';
 import '../../Providers/home_provider.dart';
 import 'package:provider/provider.dart';
 import '../scan_pdf/scan_pdf_bottom_sheet.dart';
@@ -12,10 +13,9 @@ import 'package:simple_barcode_scanner/simple_barcode_scanner.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:fluttertoast/fluttertoast.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion_pdf;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
-import 'dart:typed_data';
+import 'package:flutter/services.dart';
 
 class ToolsScreen extends StatelessWidget {
   const ToolsScreen({super.key});
@@ -458,7 +458,7 @@ class ToolsScreen extends StatelessWidget {
     try {
       // Pick PDF files only
       final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
+        allowMultiple: false,
         type: FileType.custom,
         allowedExtensions: ['pdf'],
       );
@@ -475,16 +475,25 @@ class ToolsScreen extends StatelessWidget {
         return;
       }
 
-      final files = result.files
-          .where((file) => file.path != null)
-          .map((file) => File(file.path!))
-          .toList();
-
-      if (files.isEmpty) {
+      final file = result.files.first;
+      if (file.path == null) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Selected files could not be read'),
+              content: const Text('Selected file could not be read'),
+              backgroundColor: colorScheme.surfaceVariant,
+            ),
+          );
+        }
+        return;
+      }
+
+      final pdfFile = File(file.path!);
+      if (!await pdfFile.exists()) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('File does not exist'),
               backgroundColor: colorScheme.surfaceVariant,
             ),
           );
@@ -499,7 +508,7 @@ class ToolsScreen extends StatelessWidget {
         context,
         MaterialPageRoute(
           builder: (context) => _CompressProgressScreen(
-            files: files,
+            file: pdfFile,
             colorScheme: colorScheme,
           ),
         ),
@@ -720,6 +729,16 @@ class ToolsScreen extends StatelessWidget {
       },
     );
   }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    } else if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    } else {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+  }
 }
 
 class _ImportBottomSheet extends StatelessWidget {
@@ -859,11 +878,11 @@ class _ImportBottomSheet extends StatelessWidget {
 
 // Full screen compression progress widget
 class _CompressProgressScreen extends StatefulWidget {
-  final List<File> files;
+  final File file;
   final ColorScheme colorScheme;
 
   const _CompressProgressScreen({
-    required this.files,
+    required this.file,
     required this.colorScheme,
   });
 
@@ -874,143 +893,220 @@ class _CompressProgressScreen extends StatefulWidget {
 class _CompressProgressScreenState extends State<_CompressProgressScreen> {
   double _progress = 0.0;
   String _currentFileName = '';
-  int _currentFileIndex = 0;
-  int _totalFiles = 0;
   bool _isComplete = false;
-  int _successCount = 0;
-  int _failureCount = 0;
+  int _originalSize = 0;
+  int _compressedSize = 0;
+  double _compressionPercentage = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _totalFiles = widget.files.length;
+    _currentFileName = widget.file.path.split('/').last;
     _startCompression();
   }
 
   Future<void> _startCompression() async {
-    final List<File> savedFiles = [];
+    try {
+      if (!mounted) return;
 
-    for (int i = 0; i < widget.files.length; i++) {
-      if (!mounted) break;
-
-      final file = widget.files[i];
+      final file = widget.file;
       
-      // Update UI at start of file processing
+      if (!await file.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('File does not exist'),
+              backgroundColor: widget.colorScheme.error,
+            ),
+          );
+          Navigator.of(context).pop();
+        }
+        return;
+      }
+
+      final fileName = file.path.split('/').last;
+      final fileNameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+      
+      // Get original file size
+      _originalSize = await file.length();
+      
+      // Read PDF bytes
+      final pdfBytes = await file.readAsBytes();
+      
+      // Use PDF compression service with balanced compression (0.5)
+      final compressionService = PDFCompressionService.instance;
+      final compressedBytes = await compressionService.compressPDF(
+        pdfBytes: pdfBytes,
+        compressionLevel: 0.5, // Balanced compression
+        onProgress: (progress) {
+          if (mounted) {
+            setState(() {
+              _progress = progress;
+            });
+          }
+        },
+      );
+
+      _compressedSize = compressedBytes.length;
+      
+      // Calculate compression percentage using service helper
+      _compressionPercentage = PDFCompressionService.instance.calculateCompressionPercentage(
+        _originalSize,
+        _compressedSize,
+      );
+
+      // Update progress: 80% (saving)
       setState(() {
-        _currentFileIndex = i + 1;
-        _currentFileName = file.path.split('/').last;
-        _progress = i / widget.files.length; // Start of this file
+        _progress = 0.8;
       });
 
+      // Save to device Download folder (public Downloads folder)
+      Directory downloadDir;
+      String? savedFilePath;
+      
       try {
-        if (!await file.exists()) {
-          _failureCount++;
-          // Update progress even on failure
-          setState(() {
-            _progress = (i + 1) / widget.files.length;
-          });
-          continue;
-        }
-
-        final fileName = file.path.split('/').last;
-        final fileNameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-        
-        // Update progress: 10% into current file (reading)
-        setState(() {
-          _progress = (i + 0.1) / widget.files.length;
-        });
-        
-        final pdfBytes = await file.readAsBytes();
-        
-        // Update progress: 30% into current file (loading PDF)
-        setState(() {
-          _progress = (i + 0.3) / widget.files.length;
-        });
-        
-        final pdfDocument = syncfusion_pdf.PdfDocument(inputBytes: pdfBytes);
-
-        // Update progress: 50% into current file (optimizing)
-        setState(() {
-          _progress = (i + 0.5) / widget.files.length;
-        });
-        
-        // Optimize PDF
-        final optimizedBytes = await pdfDocument.save();
-        pdfDocument.dispose();
-
-        // Update progress: 70% into current file (processing bytes)
-        setState(() {
-          _progress = (i + 0.7) / widget.files.length;
-        });
-
-        // Use optimized if smaller, otherwise use original
-        final compressedBytes = optimizedBytes.length < pdfBytes.length
-            ? Uint8List.fromList(optimizedBytes)
-            : pdfBytes;
-
-        // Update progress: 80% into current file (saving)
-        setState(() {
-          _progress = (i + 0.8) / widget.files.length;
-        });
-
-        // Save to Download folder
-        final directory = await getApplicationDocumentsDirectory();
-        final downloadDir = Directory('${directory.path}/Download/Compressed');
-        if (!await downloadDir.exists()) {
-          await downloadDir.create(recursive: true);
+        if (Platform.isAndroid) {
+          // For Android, use the public Downloads directory
+          // Try multiple common paths for public Downloads folder
+          final List<String> possiblePaths = [
+            '/storage/emulated/0/Download',
+            '/sdcard/Download',
+            '/storage/sdcard0/Download',
+            '/mnt/sdcard/Download',
+          ];
+          
+          // Try each path until one works
+          bool pathFound = false;
+          Directory? tempDir;
+          for (final path in possiblePaths) {
+            try {
+              tempDir = Directory(path);
+              // Check if directory exists or can be created
+              if (await tempDir.exists()) {
+                pathFound = true;
+                break;
+              } else {
+                // Try to create it (may fail due to permissions)
+                try {
+                  await tempDir.create(recursive: true);
+                  if (await tempDir.exists()) {
+                    pathFound = true;
+                    break;
+                  }
+                } catch (e) {
+                  // Cannot create, try next path
+                  continue;
+                }
+              }
+            } catch (e) {
+              // Continue to next path
+              continue;
+            }
+          }
+          
+          // If no public path worked, throw error (don't use app directory)
+          if (!pathFound || tempDir == null) {
+            throw Exception('Cannot access device Download folder. Please check storage permissions.');
+          } else {
+            downloadDir = tempDir;
+          }
+        } else if (Platform.isIOS) {
+          // For iOS, use documents directory
+          final directory = await getApplicationDocumentsDirectory();
+          downloadDir = Directory('${directory.path}/Download');
+          if (!await downloadDir.exists()) {
+            await downloadDir.create(recursive: true);
+          }
+        } else {
+          // Fallback for other platforms
+          final directory = await getApplicationDocumentsDirectory();
+          downloadDir = Directory('${directory.path}/Download');
+          if (!await downloadDir.exists()) {
+            await downloadDir.create(recursive: true);
+          }
         }
 
         final compressedFileName = '${fileNameWithoutExt}_compressed.pdf';
         final compressedFile = File('${downloadDir.path}/$compressedFileName');
+        
+        // Write the file
         await compressedFile.writeAsBytes(compressedBytes);
-
-        // Update progress: 100% of current file completed
-        setState(() {
-          _progress = (i + 1) / widget.files.length;
-        });
-
-        if (await compressedFile.exists()) {
-          savedFiles.add(compressedFile);
-          _successCount++;
-        } else {
-          _failureCount++;
+        savedFilePath = compressedFile.path;
+        
+        // Verify file was written
+        if (!await compressedFile.exists()) {
+          throw Exception('File was not created successfully');
+        }
+        
+        // On Android, refresh media scanner to make file visible
+        if (Platform.isAndroid) {
+          try {
+            // Use platform channel to refresh media scanner
+            // This ensures the file appears in Downloads app
+            await _refreshMediaStore(savedFilePath);
+          } catch (e) {
+            // Media scanner refresh is optional, continue even if it fails
+            print('Media scanner refresh failed: $e');
+          }
         }
       } catch (e) {
-        _failureCount++;
-        print('Error compressing file ${file.path}: $e');
-        // Update progress even on error
-        setState(() {
-          _progress = (i + 1) / widget.files.length;
-        });
+        // If we can't access public Download folder, show error
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Cannot access device Download folder. Error: $e\n\nPlease check storage permissions.',
+              ),
+              backgroundColor: widget.colorScheme.error,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+          await Future.delayed(const Duration(seconds: 2));
+          if (mounted) {
+            Navigator.of(context).pop();
+          }
+        }
+        return;
       }
-      
-      // Small delay to ensure UI updates are visible
-      await Future.delayed(const Duration(milliseconds: 50));
-    }
 
-    setState(() {
-      _progress = 1.0;
-      _isComplete = true;
-    });
+      // Update progress: 100% completed
+      setState(() {
+        _progress = 1.0;
+        _isComplete = true;
+      });
 
-    // Show completion message
-    if (mounted) {
-      await Future.delayed(const Duration(milliseconds: 500));
+      // Show completion message
+      if (mounted) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _compressionPercentage > 0
+                    ? 'PDF compressed by ${_compressionPercentage.toStringAsFixed(1)}% and saved to Download folder'
+                    : 'PDF saved to Download folder (no compression achieved)',
+              ),
+              backgroundColor: widget.colorScheme.primary,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          // Auto close after 2 seconds
+          await Future.delayed(const Duration(seconds: 2));
+          if (mounted) {
+            Navigator.of(context).pop();
+          }
+        }
+      }
+    } catch (e) {
+      print('Error compressing file: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              _successCount > 0
-                  ? '$_successCount PDF(s) compressed and saved to Download folder'
-                  : 'Compression completed with errors',
-            ),
-            backgroundColor: _successCount > 0
-                ? widget.colorScheme.primary
-                : widget.colorScheme.error,
+            content: Text('Error compressing file: $e'),
+            backgroundColor: widget.colorScheme.error,
             duration: const Duration(seconds: 3),
           ),
         );
-        // Auto close after 2 seconds
         await Future.delayed(const Duration(seconds: 2));
         if (mounted) {
           Navigator.of(context).pop();
@@ -1067,7 +1163,7 @@ class _CompressProgressScreenState extends State<_CompressProgressScreen> {
                 const SizedBox(height: AppConstants.spacingXL),
                 // Status text
                 Text(
-                  _isComplete ? 'Compression Complete!' : 'Compressing PDFs...',
+                  _isComplete ? 'Compression Complete!' : 'Compressing PDF...',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
@@ -1089,43 +1185,69 @@ class _CompressProgressScreenState extends State<_CompressProgressScreen> {
                   ),
                   const SizedBox(height: AppConstants.spacingS),
                 ],
-                // Progress text
-                Text(
-                  'File $_currentFileIndex of $_totalFiles',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: colorScheme.onSurface.withOpacity(0.6),
+                // Compression percentage
+                if (_isComplete && _compressionPercentage > 0) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppConstants.spacingL,
+                      vertical: AppConstants.spacingM,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.compress_rounded,
+                              color: colorScheme.primary,
+                              size: 24,
+                            ),
+                            const SizedBox(width: AppConstants.spacingS),
+                            Text(
+                              'Compressed by ${_compressionPercentage.toStringAsFixed(1)}%',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: colorScheme.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: AppConstants.spacingS),
+                        Text(
+                          'Original: ${PDFCompressionService.instance.formatFileSize(_originalSize)} → Compressed: ${PDFCompressionService.instance.formatFileSize(_compressedSize)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurface.withOpacity(0.6),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: AppConstants.spacingXL),
-                // Results
-                if (_isComplete) ...[
+                ] else if (_isComplete && _compressionPercentage == 0) ...[
                   Container(
                     padding: const EdgeInsets.all(AppConstants.spacingM),
                     decoration: BoxDecoration(
-                      color: _successCount > 0
-                          ? colorScheme.primary.withOpacity(0.1)
-                          : colorScheme.error.withOpacity(0.1),
+                      color: colorScheme.surfaceVariant.withOpacity(0.5),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          _successCount > 0 ? Icons.check_circle : Icons.error,
-                          color: _successCount > 0
-                              ? colorScheme.primary
-                              : colorScheme.error,
+                          Icons.info_outline,
+                          color: colorScheme.onSurface.withOpacity(0.6),
                         ),
                         const SizedBox(width: AppConstants.spacingS),
                         Text(
-                          '$_successCount successful, $_failureCount failed',
+                          'No compression achieved',
                           style: TextStyle(
                             fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: _successCount > 0
-                                ? colorScheme.primary
-                                : colorScheme.error,
+                            color: colorScheme.onSurface.withOpacity(0.6),
                           ),
                         ),
                       ],
@@ -1138,5 +1260,24 @@ class _CompressProgressScreenState extends State<_CompressProgressScreen> {
         ),
       ),
     );
+  }
+
+  Future<bool> _tryCreateDirectory(Directory dir) async {
+    try {
+      await dir.create(recursive: true);
+      return await dir.exists();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<void> _refreshMediaStore(String filePath) async {
+    try {
+      const platform = MethodChannel('com.example.utility_app/media');
+      await platform.invokeMethod('refreshMediaStore', {'path': filePath});
+    } catch (e) {
+      print('Media scanner refresh not available: $e');
+      print('File saved at: $filePath');
+    }
   }
 }

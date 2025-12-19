@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:get_storage/get_storage.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:saver_gallery/saver_gallery.dart';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
@@ -88,7 +89,7 @@ class _SignListScreenState extends State<SignListScreen> {
           ),
         ),
         title: Text(
-          'My Signatures',
+          'eSign',
           style: TextStyle(
             color: colorScheme.onBackground,
             fontSize: 22,
@@ -130,12 +131,12 @@ class _SignListScreenState extends State<SignListScreen> {
               ),
             )
           : GridView.builder(
-              padding: const EdgeInsets.all(AppConstants.spacingM),
+              padding: const EdgeInsets.all(16),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                crossAxisSpacing: AppConstants.spacingM,
-                mainAxisSpacing: AppConstants.spacingM,
-                childAspectRatio: 0.85,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                childAspectRatio: 1.0,
               ),
               itemCount: _signatures.length,
               itemBuilder: (context, index) {
@@ -168,145 +169,115 @@ class _SignListScreenState extends State<SignListScreen> {
     return Container(
       decoration: BoxDecoration(
         color: isDark
-            ? colorScheme.surface.withOpacity(0.5)
+            ? colorScheme.surface.withOpacity(0.3)
             : Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isDark
-              ? colorScheme.outline.withOpacity(0.3)
-              : colorScheme.outline.withOpacity(0.08),
+              ? colorScheme.outline.withOpacity(0.2)
+              : colorScheme.outline.withOpacity(0.1),
           width: 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: isDark
-                ? Colors.black.withOpacity(0.3)
-                : Colors.black.withOpacity(0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-            spreadRadius: 0,
-          ),
-        ],
       ),
       child: Stack(
         children: [
-          // Signature Preview
+          // Signature Preview - Full area
           Padding(
-            padding: const EdgeInsets.all(AppConstants.spacingM),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceVariant.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: signature.isTextSignature
-                        ? Center(
-                            child: Text(
-                              signature.textContent ?? 'Signature',
-                              style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.w600,
-                                color: colorScheme.onSurface,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          )
-                        : signature.imagePath != null &&
-                                File(signature.imagePath!).existsSync()
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Image.file(
-                                  File(signature.imagePath!),
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Center(
-                                      child: Icon(
-                                        Icons.edit_rounded,
-                                        color: colorScheme.onSurface
-                                            .withOpacity(0.3),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              )
-                            : Center(
+            padding: const EdgeInsets.all(12),
+            child: Container(
+              width: double.infinity,
+              height: double.infinity,
+              decoration: BoxDecoration(
+                color: isDark
+                    ? colorScheme.surface.withOpacity(0.2)
+                    : colorScheme.surfaceVariant.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: signature.isTextSignature
+                  ? Center(
+                      child: Text(
+                        signature.textContent ?? 'Signature',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white : Colors.black,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    )
+                  : signature.imagePath != null &&
+                          File(signature.imagePath!).existsSync()
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(
+                            File(signature.imagePath!),
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Center(
                                 child: Icon(
                                   Icons.edit_rounded,
-                                  color:
-                                      colorScheme.onSurface.withOpacity(0.3),
+                                  color: isDark 
+                                      ? Colors.white.withOpacity(0.3)
+                                      : Colors.black.withOpacity(0.3),
+                                  size: 32,
                                 ),
-                              ),
-                  ),
-                ),
-                const SizedBox(height: AppConstants.spacingS),
-                Text(
-                  signature.name,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: colorScheme.onSurface,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  _formatDate(signature.createdAt),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colorScheme.onSurface.withOpacity(0.5),
-                  ),
-                ),
-              ],
+                              );
+                            },
+                          ),
+                        )
+                      : Center(
+                          child: Icon(
+                            Icons.edit_rounded,
+                            color: isDark 
+                                ? Colors.white.withOpacity(0.3)
+                                : Colors.black.withOpacity(0.3),
+                            size: 32,
+                          ),
+                        ),
             ),
           ),
-          // Action Buttons
+          // Action Buttons - Minimal design
+          Positioned(
+            top: 8,
+            left: 8,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => _downloadSignature(signature),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  child: Icon(
+                    Icons.download_rounded,
+                    size: 18,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
           Positioned(
             top: 8,
             right: 8,
-            child: Row(
-              children: [
-                Container(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => _showDeleteDialog(signature),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  width: 28,
+                  height: 28,
                   decoration: BoxDecoration(
-                    color: colorScheme.surface.withOpacity(0.9),
+                    color: colorScheme.primary,
                     shape: BoxShape.circle,
                   ),
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.download_rounded,
-                      size: 18,
-                      color: colorScheme.onSurface,
-                    ),
-                    onPressed: () {
-                      _downloadSignature(signature);
-                    },
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    size: 16,
+                    color: Colors.white,
                   ),
                 ),
-                const SizedBox(width: 4),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    icon: const Icon(
-                      Icons.close_rounded,
-                      size: 18,
-                      color: Colors.red,
-                    ),
-                    onPressed: () {
-                      _showDeleteDialog(signature);
-                    },
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ],
@@ -339,40 +310,64 @@ class _SignListScreenState extends State<SignListScreen> {
 
   Future<void> _downloadSignature(SignatureModel signature) async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final downloadsDir = Directory('${directory.path}/Download/Scanify AI/ESign');
-      if (!await downloadsDir.exists()) {
-        await downloadsDir.create(recursive: true);
-      }
-
-      String? imagePath;
+      Uint8List? imageBytes;
       
       if (signature.isTextSignature) {
-        // Create image from text signature
-        imagePath = await _createTextSignatureImage(signature, downloadsDir.path);
+        // Create image bytes from text signature
+        imageBytes = await _createTextSignatureImageBytes(signature);
       } else if (signature.imagePath != null && File(signature.imagePath!).existsSync()) {
-        // Copy existing image
+        // Read image bytes from file
         final sourceFile = File(signature.imagePath!);
-        final fileName = '${signature.name.replaceAll(' ', '_')}_${DateTime.now().millisecondsSinceEpoch}.png';
-        final destFile = File('${downloadsDir.path}/$fileName');
-        await sourceFile.copy(destFile.path);
-        imagePath = destFile.path;
+        imageBytes = await sourceFile.readAsBytes();
       }
 
-      if (imagePath != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Signature saved to Downloads/Scanify AI/ESign'),
-            backgroundColor: Theme.of(context).colorScheme.primary,
-            duration: const Duration(seconds: 2),
-          ),
-        );
+      if (imageBytes == null || imageBytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Unable to load signature image'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Generate filename
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'signature_${signature.name.replaceAll(' ', '_')}_$timestamp.png';
+
+      // Save to gallery using saver_gallery
+      final result = await SaverGallery.saveImage(
+        imageBytes,
+        fileName: fileName,
+        quality: 100,
+        skipIfExists: false,
+      );
+
+      if (mounted) {
+        if (result.isSuccess) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Signature saved to gallery'),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to save signature: ${result.errorMessage ?? "Unknown error"}'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error downloading signature: $e'),
+            content: Text('Error saving signature: $e'),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
@@ -380,7 +375,7 @@ class _SignListScreenState extends State<SignListScreen> {
     }
   }
 
-  Future<String> _createTextSignatureImage(SignatureModel signature, String dirPath) async {
+  Future<Uint8List> _createTextSignatureImageBytes(SignatureModel signature) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
 
@@ -389,7 +384,7 @@ class _SignListScreenState extends State<SignListScreen> {
       style: TextStyle(
         fontSize: 48,
         fontWeight: FontWeight.w600,
-        color: Theme.of(context).colorScheme.onSurface,
+        color: Colors.black,
         fontStyle: FontStyle.italic,
       ),
     );
@@ -400,14 +395,15 @@ class _SignListScreenState extends State<SignListScreen> {
     );
     textPainter.layout();
 
-    // Draw on canvas with padding
+    // Draw on canvas with padding and transparent background
     const padding = 40.0;
     final width = textPainter.width + (padding * 2);
     final height = textPainter.height + (padding * 2);
     
+    // Draw transparent background (or white if needed)
     canvas.drawRect(
       Rect.fromLTWH(0, 0, width, height),
-      Paint()..color = Colors.white,
+      Paint()..color = Colors.transparent,
     );
     
     textPainter.paint(canvas, Offset(padding, padding));
@@ -415,28 +411,14 @@ class _SignListScreenState extends State<SignListScreen> {
     final picture = recorder.endRecording();
     final image = await picture.toImage(width.toInt(), height.toInt());
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-    final bytes = byteData!.buffer.asUint8List();
-
-    final fileName = '${signature.name.replaceAll(' ', '_')}_${DateTime.now().millisecondsSinceEpoch}.png';
-    final file = File('$dirPath/$fileName');
-    await file.writeAsBytes(bytes);
     
-    return file.path;
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date);
-
-    if (difference.inDays == 0) {
-      return 'Today';
-    } else if (difference.inDays == 1) {
-      return 'Yesterday';
-    } else if (difference.inDays < 7) {
-      return '${difference.inDays} days ago';
-    } else {
-      return '${date.day}/${date.month}/${date.year}';
+    image.dispose();
+    
+    if (byteData == null) {
+      throw Exception('Failed to convert signature to PNG');
     }
+    
+    return byteData.buffer.asUint8List();
   }
 }
 

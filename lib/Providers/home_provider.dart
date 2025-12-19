@@ -1,19 +1,38 @@
 import 'package:flutter/material.dart';
+import 'package:get_storage/get_storage.dart';
 import '../Models/document_model.dart';
 import '../Services/database_helper.dart';
 
 class HomeProvider extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper.instance;
+  final GetStorage _storage = GetStorage();
+  static const String _viewModeKey = 'home_view_mode';
+  
   String _selectedCategory = 'All Docs';
   String _searchQuery = '';
   String _sortBy = 'date_desc'; // Default: newest first
+  String _viewMode = 'list'; // 'list' or 'grid'
   List<DocumentModel> _documents = [];
   int _selectedBottomNavIndex = 0;
   bool _isLoading = false;
 
+  HomeProvider() {
+    // Load view mode from storage on initialization
+    _loadViewMode();
+  }
+
+  void _loadViewMode() {
+    final savedViewMode = _storage.read<String>(_viewModeKey);
+    if (savedViewMode != null && (savedViewMode == 'list' || savedViewMode == 'grid')) {
+      _viewMode = savedViewMode;
+      notifyListeners();
+    }
+  }
+
   String get selectedCategory => _selectedCategory;
   String get searchQuery => _searchQuery;
   String get sortBy => _sortBy;
+  String get viewMode => _viewMode;
   List<DocumentModel> get documents => _documents;
   int get selectedBottomNavIndex => _selectedBottomNavIndex;
 
@@ -75,6 +94,13 @@ class HomeProvider extends ChangeNotifier {
 
   void setSortBy(String sortBy) {
     _sortBy = sortBy;
+    notifyListeners();
+  }
+
+  void setViewMode(String viewMode) {
+    _viewMode = viewMode;
+    // Save to storage
+    _storage.write(_viewModeKey, viewMode);
     notifyListeners();
   }
 
