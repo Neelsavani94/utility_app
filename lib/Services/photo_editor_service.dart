@@ -1,7 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pro_image_editor/pro_image_editor.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
 import '../Services/document_scan_serivce.dart';
 import '../Providers/home_provider.dart';
 import 'package:provider/provider.dart';
@@ -37,10 +41,22 @@ class PhotoEditorService {
 
       // Save edited image if user completed editing
       if (editedBytes != null && context.mounted) {
+        // Save original edited image
         await _scanService.saveEditedImage(
           imageBytes: editedBytes,
           originalFileName: fileName,
         );
+
+        // Convert edited image to PDF and save to download folder
+        try {
+          await _convertImageToPDFAndSave(
+            imageBytes: editedBytes,
+            fileName: fileName,
+          );
+        } catch (e) {
+          print('Error converting to PDF: $e');
+          // Continue even if PDF conversion fails
+        }
 
         // Refresh home screen documents
         if (context.mounted) {
@@ -49,7 +65,7 @@ class PhotoEditorService {
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Image saved successfully'),
+              content: const Text('Image saved and PDF created successfully'),
               backgroundColor: Theme.of(context).colorScheme.primary,
               duration: const Duration(seconds: 2),
             ),
@@ -83,6 +99,176 @@ class PhotoEditorService {
       imageFile: imageFiles[0],
       watermarkText: watermarkText,
     );
+  }
+
+  /// Convert image bytes to PDF and save to download folder
+  Future<void> _convertImageToPDFAndSave({
+    required Uint8List imageBytes,
+    required String fileName,
+  }) async {
+    try {
+      // Create PDF document
+      final PdfDocument pdfDocument = PdfDocument();
+      
+      // Add a page
+      final PdfPage page = pdfDocument.pages.add();
+      final Size pageSize = page.size;
+
+      // Create bitmap from image bytes
+      final PdfBitmap image = PdfBitmap(imageBytes);
+      final double imageWidth = image.width.toDouble();
+      final double imageHeight = image.height.toDouble();
+
+      // Calculate aspect ratio and fit image to page
+      final double pageAspect = pageSize.width / pageSize.height;
+      final double imageAspect = imageWidth / imageHeight;
+
+      double drawWidth, drawHeight, drawX, drawY;
+
+      if (imageAspect > pageAspect) {
+        // Image is wider - fit to width
+        drawWidth = pageSize.width;
+        drawHeight = pageSize.width / imageAspect;
+        drawX = 0;
+        drawY = (pageSize.height - drawHeight) / 2;
+      } else {
+        // Image is taller - fit to height
+        drawHeight = pageSize.height;
+        drawWidth = pageSize.height * imageAspect;
+        drawX = (pageSize.width - drawWidth) / 2;
+        drawY = 0;
+      }
+
+      // Draw image on page
+      page.graphics.drawImage(
+        image,
+        Rect.fromLTWH(
+          drawX,
+          drawY,
+          drawWidth,
+          drawHeight,
+        ),
+      );
+
+      // Save PDF to bytes
+      final List<int> pdfBytesList = await pdfDocument.save();
+      pdfDocument.dispose();
+      final Uint8List pdfBytes = Uint8List.fromList(pdfBytesList);
+
+      // Save to device Download folder (public Downloads folder) - same as tools_screen.dart
+      Directory downloadDir;
+      String? savedFilePath;
+      
+      try {
+        if (Platform.isAndroid) {
+          // For Android, use the public Downloads directory
+          // Try multiple common paths for public Downloads folder
+          final List<String> possiblePaths = [
+            '/storage/emulated/0/Download',
+            '/sdcard/Download',
+            '/storage/sdcard0/Download',
+            '/mnt/sdcard/Download',
+          ];
+          
+          // Try each path until one works
+          bool pathFound = false;
+          Directory? tempDir;
+          for (final pathStr in possiblePaths) {
+            try {
+              tempDir = Directory(pathStr);
+              // Check if directory exists or can be created
+              if (await tempDir.exists()) {
+                pathFound = true;
+                break;
+              } else {
+                // Try to create it (may fail due to permissions)
+                try {
+                  await tempDir.create(recursive: true);
+                  if (await tempDir.exists()) {
+                    pathFound = true;
+                    break;
+                  }
+                } catch (e) {
+                  // Cannot create, try next path
+                  continue;
+                }
+              }
+            } catch (e) {
+              // Continue to next path
+              continue;
+            }
+          }
+          
+          // If no public path worked, throw error (don't use app directory)
+          if (!pathFound || tempDir == null) {
+            throw Exception('Cannot access device Download folder. Please check storage permissions.');
+          } else {
+            downloadDir = tempDir;
+          }
+        } else if (Platform.isIOS) {
+          // For iOS, use documents directory
+          final directory = await getApplicationDocumentsDirectory();
+          downloadDir = Directory('${directory.path}/Download');
+          if (!await downloadDir.exists()) {
+            await downloadDir.create(recursive: true);
+          }
+        } else {
+          // Fallback for other platforms
+          final directory = await getApplicationDocumentsDirectory();
+          downloadDir = Directory('${directory.path}/Download');
+          if (!await downloadDir.exists()) {
+            await downloadDir.create(recursive: true);
+          }
+        }
+
+        // Generate PDF file name
+        final String baseFileName = path.basenameWithoutExtension(fileName);
+        final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+        final String finalFileName = '${baseFileName}_$timestamp.pdf';
+        
+        // Save PDF file
+        final File pdfFile = File('${downloadDir.path}/$finalFileName');
+        await pdfFile.writeAsBytes(pdfBytes);
+        savedFilePath = pdfFile.path;
+        
+        // Verify file was written
+        if (!await pdfFile.exists()) {
+          throw Exception('File was not created successfully');
+        }
+        
+        // On Android, refresh media scanner to make file visible
+        if (Platform.isAndroid) {
+          try {
+            // Use platform channel to refresh media scanner
+            // This ensures the file appears in Downloads app
+            await _refreshMediaStore(savedFilePath);
+          } catch (e) {
+            // Media scanner refresh is optional, continue even if it fails
+            print('Media scanner refresh failed: $e');
+          }
+        }
+
+        print('PDF saved to: $savedFilePath');
+      } catch (e) {
+        print('Error saving PDF to device Download folder: $e');
+        // Re-throw to be handled by caller
+        rethrow;
+      }
+    } catch (e) {
+      print('Error converting image to PDF: $e');
+      rethrow;
+    }
+  }
+
+  /// Refresh media store on Android to make file visible in Downloads app
+  Future<void> _refreshMediaStore(String filePath) async {
+    try {
+      const platform = MethodChannel('com.example.utility_app/media');
+      await platform.invokeMethod('refreshMediaStore', {'path': filePath});
+    } catch (e) {
+      print('Media scanner refresh not available: $e');
+      print('File saved at: $filePath');
+    }
   }
 }
 

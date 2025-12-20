@@ -1,25 +1,37 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:printing/printing.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:pro_image_editor/pro_image_editor.dart';
 import '../../Constants/app_constants.dart';
 import '../../Providers/home_provider.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Models/document_model.dart';
-import '../../Services/document_scan_serivce.dart';
+import '../../Services/file_storage_service.dart';
 import '../home/document_detail_screen.dart';
 import '../extract_text/extract_text_screen.dart';
 import '../../modules/watermark/watermark_screen.dart';
+import '../arrange_files/arrange_files_screen.dart';
 
 class ImportFilesScreen extends StatefulWidget {
   final bool forExtractText;
   final bool forWatermark;
-  
+  final bool forMerge;
+  final bool forArrange;
+  final bool forSplit;
+
   const ImportFilesScreen({
     super.key,
     this.forExtractText = false,
     this.forWatermark = false,
+    this.forMerge = false,
+    this.forArrange = false,
+    this.forSplit = false,
   });
 
   @override
@@ -28,7 +40,6 @@ class ImportFilesScreen extends StatefulWidget {
 
 class _ImportFilesScreenState extends State<ImportFilesScreen> {
   final ImagePicker _imagePicker = ImagePicker();
-  final DocumentScanService _scanService = DocumentScanService();
 
   @override
   void initState() {
@@ -50,18 +61,21 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: Icon(
-            Icons.arrow_back_rounded,
-            color: colorScheme.onSurface,
-          ),
+          icon: Icon(Icons.arrow_back_rounded, color: colorScheme.onSurface),
           onPressed: () => NavigationService.goBack(),
         ),
         title: Text(
           widget.forExtractText
               ? 'Select Document'
               : widget.forWatermark
-                  ? 'Select Document'
-                  : 'Import Files',
+              ? 'Select Document'
+              : widget.forMerge
+              ? 'Import Files'
+              : widget.forArrange
+              ? 'Select Document'
+              : widget.forSplit
+              ? 'Select Document'
+              : 'Import Files',
           style: TextStyle(
             color: colorScheme.onBackground,
             fontSize: 20,
@@ -77,11 +91,8 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Three main action buttons (only show if not in Extract Text or Watermark mode)
-                if (!widget.forExtractText && !widget.forWatermark) ...[
-                  _buildActionButtons(context, colorScheme, isDark),
-                  const SizedBox(height: 24),
-                ],
+                _buildActionButtons(context, colorScheme, isDark),
+                const SizedBox(height: 24),
                 // Documents list
                 _buildDocumentsList(context, provider, colorScheme, isDark),
               ],
@@ -121,7 +132,7 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
         _buildActionButton(
           context,
           icon: Icons.insert_drive_file_rounded,
-          label: 'Files',
+          label: widget.forMerge ? 'Document' : 'Files',
           color: const Color(0xFF2196F3), // Blue
           onTap: () => _handleFiles(context, colorScheme),
           colorScheme: colorScheme,
@@ -148,8 +159,8 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
           margin: const EdgeInsets.symmetric(horizontal: 4),
           padding: const EdgeInsets.symmetric(vertical: 20),
           decoration: BoxDecoration(
-            color: isDark 
-                ? colorScheme.surface.withOpacity(0.3) 
+            color: isDark
+                ? colorScheme.surface.withOpacity(0.3)
                 : colorScheme.surface,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
@@ -160,11 +171,7 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                icon,
-                color: color,
-                size: 32,
-              ),
+              Icon(icon, color: color, size: 32),
               const SizedBox(height: 8),
               Text(
                 label,
@@ -245,7 +252,13 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
           separatorBuilder: (context, index) => const SizedBox(height: 1),
           itemBuilder: (context, index) {
             final document = documents[index];
-            return _buildDocumentCard(context, document, provider, colorScheme, isDark);
+            return _buildDocumentCard(
+              context,
+              document,
+              provider,
+              colorScheme,
+              isDark,
+            );
           },
         ),
       ],
@@ -261,7 +274,101 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
   ) {
     return GestureDetector(
       onTap: () async {
-        if (widget.forExtractText) {
+        if (widget.forArrange) {
+          // Return document file to previous screen (Arrange Files screen)
+          final imagePath = document.imagePath ?? document.thumbnailPath;
+          if (imagePath != null && imagePath.isNotEmpty) {
+            final file = File(imagePath);
+            if (await file.exists()) {
+              Navigator.of(context).pop([file]);
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('File not found: ${imagePath.split('/').last}'),
+                  backgroundColor: colorScheme.error,
+                ),
+              );
+            }
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Document file not available'),
+                backgroundColor: colorScheme.error,
+              ),
+            );
+          }
+        } else if (widget.forSplit) {
+          // Navigate to Arrange Files screen with selected document for split
+          final imagePath = document.imagePath ?? document.thumbnailPath;
+          if (imagePath != null && imagePath.isNotEmpty) {
+            final file = File(imagePath);
+            if (await file.exists()) {
+              // Check if file is PDF
+              final isPDF = file.path.toLowerCase().endsWith('.pdf');
+
+              if (isPDF) {
+                // Convert PDF pages to images
+                await _convertPdfToImagesAndNavigate(
+                  context,
+                  file,
+                  document,
+                  colorScheme,
+                );
+              } else {
+                // For non-PDF files, navigate directly
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        ArrangeFilesScreen(files: [file], document: document),
+                  ),
+                );
+              }
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('File not found: ${imagePath.split('/').last}'),
+                  backgroundColor: colorScheme.error,
+                ),
+              );
+            }
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Document file not available'),
+                backgroundColor: colorScheme.error,
+              ),
+            );
+          }
+        } else if (widget.forMerge) {
+          // Navigate to Arrange Files screen with selected document
+          final imagePath = document.imagePath ?? document.thumbnailPath;
+          if (imagePath != null && imagePath.isNotEmpty) {
+            final file = File(imagePath);
+            if (await file.exists()) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ArrangeFilesScreen(files: [file]),
+                ),
+              );
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('File not found: ${imagePath.split('/').last}'),
+                  backgroundColor: colorScheme.error,
+                ),
+              );
+            }
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Document file not available'),
+                backgroundColor: colorScheme.error,
+              ),
+            );
+          }
+        } else if (widget.forExtractText) {
           // Open Extract Text screen with document's image path
           final imagePath = document.imagePath ?? document.thumbnailPath;
           if (imagePath != null && imagePath.isNotEmpty) {
@@ -289,15 +396,14 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => WatermarkScreen(initialFilePath: imagePath),
+                  builder: (context) =>
+                      WatermarkScreen(initialFilePath: imagePath),
                 ),
               );
             } else {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(
-                    'File not found: ${imagePath.split('/').last}',
-                  ),
+                  content: Text('File not found: ${imagePath.split('/').last}'),
                   backgroundColor: colorScheme.error,
                   duration: const Duration(seconds: 3),
                 ),
@@ -336,8 +442,8 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: isDark 
-              ? colorScheme.surface.withOpacity(0.3) 
+          color: isDark
+              ? colorScheme.surface.withOpacity(0.3)
               : colorScheme.surface,
           border: Border(
             bottom: BorderSide(
@@ -379,12 +485,18 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
                 ],
               ),
             ),
-            // All Docs button (only show if not in Extract Text or Watermark mode)
-            if (!widget.forExtractText && !widget.forWatermark)
+            // All Docs button (only show if not in Extract Text, Watermark, Arrange, or Split mode)
+            if (!widget.forExtractText &&
+                !widget.forWatermark &&
+                !widget.forArrange &&
+                !widget.forSplit)
               TextButton(
                 onPressed: () => NavigationService.goBack(),
                 style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
@@ -468,15 +580,20 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
     ColorScheme colorScheme,
   ) async {
     try {
-      final pickedFiles = await _imagePicker.pickMultiImage(
-        imageQuality: 85,
-      );
+      final pickedFiles = await _imagePicker.pickMultiImage(imageQuality: 85);
 
       if (pickedFiles.isEmpty) {
         return;
       }
 
       final imageFiles = pickedFiles.map((f) => File(f.path)).toList();
+
+      // If in merge or arrange mode, return files instead of importing
+      if (widget.forMerge || widget.forArrange) {
+        Navigator.of(context).pop(imageFiles);
+        return;
+      }
+
       await _importFiles(context, colorScheme, imageFiles);
     } catch (e) {
       if (context.mounted) {
@@ -503,7 +620,7 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
   ) async {
     try {
       final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
+        allowMultiple: false,
         type: FileType.custom,
         allowedExtensions: ['jpg', 'jpeg', 'png', 'heic', 'webp', 'pdf'],
       );
@@ -529,6 +646,12 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
         return;
       }
 
+      // If in merge or arrange mode, return files instead of importing
+      if (widget.forMerge || widget.forArrange) {
+        Navigator.of(context).pop(files);
+        return;
+      }
+
       await _importFiles(context, colorScheme, files);
     } catch (e) {
       if (context.mounted) {
@@ -547,60 +670,213 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
     ColorScheme colorScheme,
     List<File> files,
   ) async {
+    if (files.isEmpty) return;
+
+    final fileStorageService = FileStorageService.instance;
+    int successCount = 0;
+
+    // Process each file
+    for (final file in files) {
+      if (!context.mounted) break;
+
+      try {
+        // Check if file exists
+        if (!await file.exists()) {
+          continue;
+        }
+
+        // Get file extension
+        final extension = file.path.toLowerCase().split('.').last;
+        final fileName = file.path.split('/').last;
+
+        // Check if it's an image file
+        if (['jpg', 'jpeg', 'png', 'bmp', 'webp', 'heic'].contains(extension)) {
+          // For images: Open editor first, then save edited image
+
+          // Open image editor
+          final editedBytes = await Navigator.of(context).push<Uint8List>(
+            MaterialPageRoute(
+              fullscreenDialog: true,
+              builder: (_) => ImageEditorPage(
+                imageFile: file,
+                hostTheme: Theme.of(context),
+              ),
+            ),
+          );
+
+          // Save edited image if user completed editing
+          if (editedBytes != null && context.mounted) {
+            // Save edited image to database
+            final docId = await fileStorageService.saveImageFile(
+              imageBytes: editedBytes,
+              fileName: fileName,
+            );
+
+            if (docId != null) {
+              successCount++;
+            }
+          }
+        } else if (extension == 'pdf') {
+          // For PDFs: Save directly without editing
+          final fileBytes = await file.readAsBytes();
+          final docId = await fileStorageService.savePDFFile(
+            pdfBytes: fileBytes,
+            fileName: fileName,
+          );
+
+          if (docId != null) {
+            successCount++;
+          }
+        }
+      } catch (e) {
+        print('Error processing file ${file.path}: $e');
+        // Continue with next file
+      }
+    }
+
+    // Refresh and show result
     if (context.mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => Center(
+      final provider = Provider.of<HomeProvider>(context, listen: false);
+      provider.loadDocuments();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '$successCount of ${files.length} file(s) imported successfully',
+          ),
+          backgroundColor: successCount > 0
+              ? colorScheme.primary
+              : colorScheme.error,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _convertPdfToImagesAndNavigate(
+    BuildContext context,
+    File pdfFile,
+    DocumentModel document,
+    ColorScheme colorScheme,
+  ) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => WillPopScope(
+        onWillPop: () async => false,
+        child: Dialog(
+          backgroundColor: Colors.transparent,
           child: Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(12),
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(16),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const CircularProgressIndicator(),
+                CircularProgressIndicator(color: colorScheme.primary),
                 const SizedBox(height: 16),
                 Text(
-                  'Importing ${files.length} file(s)...',
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                  ),
+                  'Converting PDF pages to images...',
+                  style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
                 ),
               ],
             ),
           ),
         ),
-      );
-    }
+      ),
+    );
 
     try {
-      await _scanService.importAndSaveImages(imageFiles: files);
+      final pdfBytes = await pdfFile.readAsBytes();
+      final pdfDocument = PdfDocument(inputBytes: pdfBytes);
+      final pageCount = pdfDocument.pages.count;
 
+      if (pageCount == 0) {
+        pdfDocument.dispose();
+        if (context.mounted) {
+          Navigator.of(context).pop(); // Close loading dialog
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('PDF has no pages'),
+              backgroundColor: colorScheme.error,
+            ),
+          );
+        }
+        return;
+      }
+
+      final List<File> imageFiles = [];
+      final tempDir = await getTemporaryDirectory();
+      final imagesDir = Directory(
+        '${tempDir.path}/split_pdf_images_${DateTime.now().millisecondsSinceEpoch}',
+      );
+      if (!await imagesDir.exists()) {
+        await imagesDir.create(recursive: true);
+      }
+
+      // Render all pages and convert to images
+      final imageStream = Printing.raster(pdfBytes, dpi: 300);
+
+      int pageIndex = 0;
+      await for (final imageRaster in imageStream) {
+        if (pageIndex >= pageCount) break;
+
+        try {
+          final imageBytes = await imageRaster.toPng();
+
+          if (imageBytes.isNotEmpty) {
+            // Save image to temporary directory
+            final imageFile = File(
+              '${imagesDir.path}/page_${pageIndex + 1}.png',
+            );
+            await imageFile.writeAsBytes(imageBytes);
+            imageFiles.add(imageFile);
+          }
+        } catch (e) {
+          print('Error converting page ${pageIndex + 1}: $e');
+        }
+
+        pageIndex++;
+      }
+
+      pdfDocument.dispose();
+
+      if (imageFiles.isEmpty) {
+        if (context.mounted) {
+          Navigator.of(context).pop(); // Close loading dialog
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Failed to convert any pages to images'),
+              backgroundColor: colorScheme.error,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Close loading dialog
       if (context.mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
+        Navigator.of(context).pop();
 
-        final provider = Provider.of<HomeProvider>(context, listen: false);
-        provider.loadDocuments();
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${files.length} file(s) imported successfully'),
-            backgroundColor: colorScheme.primary,
-            duration: const Duration(seconds: 2),
+        // Navigate to Arrange Files screen with all image files
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                ArrangeFilesScreen(files: imageFiles, document: document),
           ),
         );
       }
     } catch (e) {
       if (context.mounted) {
-        Navigator.of(context).pop(); // Close loading dialog if open
+        Navigator.of(context).pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error importing files: $e'),
+            content: Text('Error converting PDF: $e'),
             backgroundColor: colorScheme.error,
-            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -608,3 +884,82 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
   }
 }
 
+/// Image Editor Page for importing files
+class ImageEditorPage extends StatelessWidget {
+  const ImageEditorPage({
+    super.key,
+    required this.imageFile,
+    required this.hostTheme,
+  });
+
+  final File imageFile;
+  final ThemeData hostTheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List>(
+      future: imageFile.readAsBytes(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Scaffold(
+            backgroundColor: hostTheme.colorScheme.background,
+            body: Center(
+              child: CircularProgressIndicator(
+                color: hostTheme.colorScheme.primary,
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasError || !snapshot.hasData) {
+          return Scaffold(
+            backgroundColor: hostTheme.colorScheme.background,
+            appBar: AppBar(
+              backgroundColor: hostTheme.colorScheme.background,
+              leading: IconButton(
+                icon: Icon(Icons.close, color: hostTheme.colorScheme.onSurface),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+            body: Center(
+              child: Text(
+                'Error loading image',
+                style: TextStyle(color: hostTheme.colorScheme.onSurface),
+              ),
+            ),
+          );
+        }
+
+        final configs = ProImageEditorConfigs(
+          designMode: hostTheme.brightness == Brightness.dark
+              ? ImageEditorDesignMode.cupertino
+              : ImageEditorDesignMode.material,
+          theme: hostTheme,
+          helperLines: const HelperLineConfigs(),
+        );
+
+        return Theme(
+          data: hostTheme,
+          child: ProImageEditor.memory(
+            snapshot.data!,
+            configs: configs,
+            callbacks: ProImageEditorCallbacks(
+              onImageEditingComplete: (bytes) async {
+                if (context.mounted) {
+                  // Pop with result - this will close the editor
+                  Navigator.of(context).pop(bytes);
+                }
+              },
+              onCloseEditor: (_) {
+                // When user cancels/closes editor, just pop once
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                }
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+}

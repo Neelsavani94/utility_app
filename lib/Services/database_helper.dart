@@ -6,10 +6,96 @@ import '../Models/tag_model.dart';
 import '../Models/document_model.dart';
 import '../Models/document_detail_model.dart';
 
-/// Database Helper matching Kotlin structure
-/// Main table: alldocs (id, name, date, tag, firstimage, pin, biometric)
-/// Dynamic tables: One per group/folder with columns:
+/// Database Helper with complete CRUD operations
+/// 
+/// This class provides a comprehensive database service with proper Create, Read, Update, Delete
+/// operations for all entities in the application.
+/// 
+/// Database Structure:
+/// - Main table: alldocs (id, name, date, tag, firstimage, pin, biometric)
+/// - Documents table: Individual documents with modern structure
+/// - Tags table: Tag management
+/// - Dynamic tables: One per group/folder with columns:
 ///   id, imgname, imgnote, imgpath, old_folder_names, tag, key_is_first_image_available, datev, pin, biometric
+/// 
+/// CRUD Operations Available:
+/// 
+/// TAGS:
+///   - createTag(Tag) - Create a new tag
+///   - getAllTags() - Get all tags
+///   - getTagById(int) - Get tag by ID
+///   - getTagByName(String) - Get tag by name
+///   - tagExists(String) - Check if tag exists
+///   - updateTag(Tag) - Update an existing tag
+///   - deleteTag(int) - Delete a tag
+/// 
+/// DOCUMENTS:
+///   - createDocument(Document) - Create a new document
+///   - getAllDocuments() - Get all non-deleted documents
+///   - getDocumentById(int) - Get document by ID
+///   - updateDocument(Document) - Update an existing document
+///   - deleteDocument(int) - Permanently delete a document
+///   - softDeleteDocument(int) - Soft delete (move to trash)
+///   - restoreDocument(int) - Restore a soft-deleted document
+///   - searchDocuments(String) - Search documents by title
+/// 
+/// DOCUMENT DETAILS:
+///   - createDocumentDetail(DocumentDetail) - Create a new document detail
+///   - getDocumentDetailsByDocumentId(int) - Get all details for a document
+///   - getDocumentDetailById(int) - Get document detail by ID
+///   - updateDocumentDetail(DocumentDetail) - Update an existing document detail
+///   - deleteDocumentDetail(int) - Permanently delete a document detail
+///   - softDeleteDocumentDetail(int) - Soft delete (move to trash)
+/// 
+/// GROUPS:
+///   - createGroup(...) - Create a new group
+///   - getAllGroups() - Get all groups
+///   - getGroupsByTag(String) - Get groups by tag
+///   - getSingleGroupsByName(String) - Get group by name
+///   - getGroupById(int) - Get group by ID
+///   - updateGroupName(String, String) - Rename a group
+///   - updateGroup(...) - Update group information
+///   - deleteGroup(String) - Permanently delete a group
+/// 
+/// GROUP DOCUMENTS:
+///   - addGroupDoc(...) - Add document to a group
+///   - getGroupDocs(String) - Get all documents in a group
+///   - updateGroupListDoc(...) - Update document in group
+///   - deleteSingleDoc(String, String) - Delete document from group
+///   - moveToBin(...) - Move document to trash
+///   - moveFromBin(...) - Restore document from trash
+/// 
+/// STATISTICS:
+///   - getDocumentCount() - Get total document count
+///   - getTagCount() - Get total tag count
+///   - getFavouriteCount() - Get favourite count
+///   - getDocumentDetailCount(int) - Get detail count for a document
+/// 
+/// Usage Example:
+/// ```dart
+/// // Create a tag
+/// final tag = Tag(title: 'My Tag');
+/// final tagId = await DatabaseHelper.instance.createTag(tag);
+/// 
+/// // Create a document
+/// final document = Document(
+///   title: 'My Document',
+///   type: 'PDF',
+///   imagePath: '/path/to/image.jpg',
+///   tagId: tagId,
+/// );
+/// final docId = await DatabaseHelper.instance.createDocument(document);
+/// 
+/// // Get all documents
+/// final documents = await DatabaseHelper.instance.getAllDocuments();
+/// 
+/// // Update document
+/// final updatedDoc = document.copyWith(title: 'Updated Title');
+/// await DatabaseHelper.instance.updateDocument(updatedDoc);
+/// 
+/// // Delete document
+/// await DatabaseHelper.instance.deleteDocument(docId);
+/// ```
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
@@ -226,12 +312,19 @@ class DatabaseHelper {
   /// Create document table for a group
   Future<void> createDocTable(String groupName) async {
     final tableName = _validateTableName(groupName);
+    final db = await database;
     
-    if (await isGroupNameExist(groupName)) {
+    // Check if table actually exists in database
+    final result = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      [tableName],
+    );
+    
+    if (result.isNotEmpty) {
       return; // Table already exists
     }
 
-    final db = await database;
+    // Create the table
     await db.execute('''
       CREATE TABLE '$tableName'(
         $_keyId INTEGER PRIMARY KEY,
@@ -272,8 +365,18 @@ class DatabaseHelper {
     ''');
   }
 
-  /// Add group to alldocs table
-  Future<int> addGroup({
+  // ==================== GROUPS CRUD OPERATIONS ====================
+  
+  /// CREATE: Add a new group to alldocs table
+  /// @param groupName: Name of the group
+  /// @param groupDate: Date string for the group
+  /// @param groupTag: Optional tag ID
+  /// @param groupFirstImg: Optional first image path
+  /// @param groupPin: Optional PIN
+  /// @param biometric: Optional biometric flag
+  /// @returns: The ID of the inserted group
+  /// @throws: Exception if group name already exists
+  Future<int> createGroup({
     required String groupName,
     required String groupDate,
     String? groupTag,
@@ -281,19 +384,37 @@ class DatabaseHelper {
     String? groupPin,
     String? biometric,
   }) async {
-    if (await isGroupNameExist(groupName)) {
-      throw Exception('Document Name Already Exist');
-    }
+    try {
+      // Validate group name
+      if (groupName.trim().isEmpty) {
+        throw Exception('Group name cannot be empty');
+      }
+      
+      if (await isGroupNameExist(groupName)) {
+        throw Exception('Document Name Already Exist');
+      }
 
-    final db = await database;
-    return await db.insert(_tableAllDocs, {
-      _keyName: groupName,
-      _keyDate: groupDate,
-      _keyTag: groupTag ?? '',
-      _keyFirstImage: groupFirstImg ?? '',
-      _keyPin: groupPin ?? '',
-      _keyBiometric: biometric ?? '',
-    });
+      final db = await database;
+      
+      // Create the group table first
+      await createDocTable(groupName);
+      
+      // Insert into alldocs table
+      final id = await db.insert(_tableAllDocs, {
+        _keyName: groupName,
+        _keyDate: groupDate,
+        _keyTag: groupTag ?? '',
+        _keyFirstImage: groupFirstImg ?? '',
+        _keyPin: groupPin ?? '',
+        _keyBiometric: biometric ?? '',
+      });
+      
+      log('Group created with ID: $id');
+      return id;
+    } catch (e) {
+      log('Error creating group: $e');
+      rethrow;
+    }
   }
 
   /// Add bin group
@@ -356,40 +477,109 @@ class DatabaseHelper {
     return result;
   }
 
-  /// Get all groups
+  /// READ: Get all groups
+  /// @returns: List of all groups
   Future<List<Map<String, dynamic>>> getAllGroups() async {
-    final db = await database;
-    return await db.query(_tableAllDocs);
+    try {
+      final db = await database;
+      return await db.query(
+        _tableAllDocs,
+        orderBy: '$_keyDate DESC',
+      );
+    } catch (e) {
+      log('Error getting all groups: $e');
+      return [];
+    }
   }
 
-  /// Get only groups without first image
+  /// READ: Get only groups without first image
+  /// @returns: List of groups without first image
   Future<List<Map<String, dynamic>>> getOnlyAllGroups() async {
-    final db = await database;
-    final allGroups = await db.query(_tableAllDocs);
-    return allGroups.where((group) {
-      final firstImage = group[_keyFirstImage]?.toString() ?? '';
-      return firstImage.isEmpty;
-    }).toList();
+    try {
+      final db = await database;
+      final allGroups = await db.query(
+        _tableAllDocs,
+        orderBy: '$_keyDate DESC',
+      );
+      return allGroups.where((group) {
+        final firstImage = group[_keyFirstImage]?.toString() ?? '';
+        return firstImage.isEmpty;
+      }).toList();
+    } catch (e) {
+      log('Error getting groups without first image: $e');
+      return [];
+    }
   }
 
-  /// Get groups by tag
+  /// READ: Get groups by tag
+  /// @param tag: Tag ID or tag name
+  /// @returns: List of groups with the specified tag
   Future<List<Map<String, dynamic>>> getGroupsByTag(String tag) async {
-    final db = await database;
-    return await db.query(
-      _tableAllDocs,
-      where: '$_keyTag = ?',
-      whereArgs: [tag],
-    );
+    try {
+      final db = await database;
+      return await db.query(
+        _tableAllDocs,
+        where: '$_keyTag = ?',
+        whereArgs: [tag],
+        orderBy: '$_keyDate DESC',
+      );
+    } catch (e) {
+      log('Error getting groups by tag: $e');
+      return [];
+    }
   }
 
-  /// Get single group by name
+  /// READ: Get single group by name
+  /// @param groupName: Name of the group
+  /// @returns: List containing the group (empty if not found)
   Future<List<Map<String, dynamic>>> getSingleGroupsByName(String groupName) async {
+    try {
+      final db = await database;
+      return await db.query(
+        _tableAllDocs,
+        where: '$_keyName = ?',
+        whereArgs: [groupName],
+        limit: 1,
+      );
+    } catch (e) {
+      log('Error getting group by name: $e');
+      return [];
+    }
+  }
+  
+  /// READ: Get group by ID
+  /// @param id: Group ID
+  /// @returns: Group map or null if not found
+  Future<Map<String, dynamic>?> getGroupById(int id) async {
+    try {
+      final db = await database;
+      final result = await db.query(
+        _tableAllDocs,
+        where: '$_keyId = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (result.isEmpty) return null;
+      return result.first;
+    } catch (e) {
+      log('Error getting group by ID: $e');
+      return null;
+    }
+  }
+
+  /// Check if a table exists in the database
+  Future<bool> _tableExists(String tableName) async {
     final db = await database;
-    return await db.query(
-      _tableAllDocs,
-      where: '$_keyName = ?',
-      whereArgs: [groupName],
-    );
+    try {
+      final result = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        [tableName],
+      );
+      return result.isNotEmpty;
+    } catch (e) {
+      log('Error checking if table exists: $e');
+      return false;
+    }
   }
 
   /// Get documents from a group table
@@ -398,6 +588,11 @@ class DatabaseHelper {
     final db = await database;
     
     try {
+      // Check if table exists before querying
+      if (!await _tableExists(tableName)) {
+        log('Table does not exist: $tableName');
+        return [];
+      }
       return await db.query(tableName);
     } catch (e) {
       log('Error getting group docs: $e');
@@ -434,24 +629,83 @@ class DatabaseHelper {
     }
   }
 
-  /// Rename group
+  /// UPDATE: Update group name
+  /// @param oldName: Current group name
+  /// @param newName: New group name
+  /// @throws: Exception if new name already exists
   Future<void> updateGroupName(String oldName, String newName) async {
-    if (await isGroupNameExist(newName)) {
-      throw Exception('Document Name Already Exist');
+    try {
+      // Validate new name
+      if (newName.trim().isEmpty) {
+        throw Exception('Group name cannot be empty');
+      }
+      
+      if (await isGroupNameExist(newName)) {
+        throw Exception('Document Name Already Exist');
+      }
+
+      final db = await database;
+      
+      // Update in alldocs table
+      await db.update(
+        _tableAllDocs,
+        {_keyName: newName},
+        where: '$_keyName = ?',
+        whereArgs: [oldName],
+      );
+
+      // Rename the table
+      final oldTableName = _validateTableName(oldName);
+      final newTableName = _validateTableName(newName);
+      await db.execute('ALTER TABLE $oldTableName RENAME TO $newTableName');
+      
+      log('Group renamed from $oldName to $newName');
+    } catch (e) {
+      log('Error updating group name: $e');
+      rethrow;
     }
-
-    final db = await database;
-    await db.update(
-      _tableAllDocs,
-      {_keyName: newName},
-      where: '$_keyName = ?',
-      whereArgs: [oldName],
-    );
-
-    // Rename the table
-    final oldTableName = _validateTableName(oldName);
-    final newTableName = _validateTableName(newName);
-    await db.execute('ALTER TABLE $oldTableName RENAME TO $newTableName');
+  }
+  
+  /// UPDATE: Update group information
+  /// @param groupName: Name of the group to update
+  /// @param groupTag: Optional new tag
+  /// @param groupFirstImg: Optional new first image
+  /// @param groupPin: Optional new PIN
+  /// @param biometric: Optional new biometric flag
+  /// @returns: Number of rows affected
+  Future<int> updateGroup({
+    required String groupName,
+    String? groupTag,
+    String? groupFirstImg,
+    String? groupPin,
+    String? biometric,
+  }) async {
+    try {
+      final db = await database;
+      
+      final Map<String, dynamic> updates = {};
+      if (groupTag != null) updates[_keyTag] = groupTag;
+      if (groupFirstImg != null) updates[_keyFirstImage] = groupFirstImg;
+      if (groupPin != null) updates[_keyPin] = groupPin;
+      if (biometric != null) updates[_keyBiometric] = biometric;
+      
+      if (updates.isEmpty) {
+        throw Exception('No fields to update');
+      }
+      
+      final count = await db.update(
+        _tableAllDocs,
+        updates,
+        where: '$_keyName = ?',
+        whereArgs: [groupName],
+      );
+      
+      log('Group updated: $groupName');
+      return count;
+    } catch (e) {
+      log('Error updating group: $e');
+      rethrow;
+    }
   }
 
   /// Update tag name
@@ -550,18 +804,52 @@ class DatabaseHelper {
     );
   }
 
-  /// Delete group
+  /// DELETE: Delete a group permanently
+  /// @param groupName: Name of the group to delete
+  /// @throws: Exception if group not found
   Future<void> deleteGroup(String groupName) async {
-    final db = await database;
-    await db.delete(
-      _tableAllDocs,
-      where: '$_keyName = ?',
-      whereArgs: [groupName],
-    );
-    
-    final tableName = _validateTableName(groupName);
-    await db.execute('DROP TABLE IF EXISTS $tableName');
+    try {
+      final db = await database;
+      
+      // Check if group exists
+      if (!await isGroupNameExist(groupName)) {
+        throw Exception('Group not found');
+      }
+      
+      // Delete from alldocs table
+      await db.delete(
+        _tableAllDocs,
+        where: '$_keyName = ?',
+        whereArgs: [groupName],
+      );
+      
+      // Drop the group table
+      final tableName = _validateTableName(groupName);
+      await db.execute('DROP TABLE IF EXISTS $tableName');
+      
+      log('Group deleted: $groupName');
+    } catch (e) {
+      log('Error deleting group: $e');
+      rethrow;
+    }
   }
+  
+  // Legacy method for backward compatibility
+  Future<int> addGroup({
+    required String groupName,
+    required String groupDate,
+    String? groupTag,
+    String? groupFirstImg,
+    String? groupPin,
+    String? biometric,
+  }) => createGroup(
+    groupName: groupName,
+    groupDate: groupDate,
+    groupTag: groupTag,
+    groupFirstImg: groupFirstImg,
+    groupPin: groupPin,
+    biometric: biometric,
+  );
 
   /// Delete single document from group
   Future<void> deleteSingleDoc(String groupName, String docName) async {
@@ -668,30 +956,47 @@ class DatabaseHelper {
     return result.first[_keyImgNote]?.toString() ?? '';
   }
 
-  // ==================== Compatibility Methods (for existing code) ====================
-  // These methods provide compatibility with existing Document/DocumentDetail models
-
-  /// Insert document (converts to group structure)
-  Future<int> insertDocument(Document document) async {
+  // ==================== DOCUMENTS CRUD OPERATIONS ====================
+  
+  /// CREATE: Insert a new document
+  /// @param document: Document object to insert
+  /// @returns: The ID of the inserted document
+  Future<int> createDocument(Document document) async {
     try {
       final db = await database;
       
-      // Insert into Documents table (new structure)
-      final result = await db.insert(
+      // Validate document data
+      if (document.title.trim().isEmpty) {
+        throw Exception('Document title cannot be empty');
+      }
+      if (document.imagePath.trim().isEmpty) {
+        throw Exception('Document image path cannot be empty');
+      }
+      
+      // Prepare document with timestamps
+      final now = DateTime.now();
+      final docToInsert = document.copyWith(
+        createdAt: document.createdAt == DateTime.now() ? now : document.createdAt,
+        updatedAt: now,
+      );
+      
+      // Insert into Documents table
+      final id = await db.insert(
         _tableDocuments,
-        document.toMap(),
+        docToInsert.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
       
-      log('Document inserted with ID: $result');
-      return result;
+      log('Document created with ID: $id');
+      return id;
     } catch (e) {
-      log('Error inserting document: $e');
+      log('Error creating document: $e');
       rethrow;
     }
   }
 
-  /// Get all documents from Documents table
+  /// READ: Get all documents
+  /// @returns: List of all non-deleted documents
   Future<List<Document>> getAllDocuments() async {
     try {
       final db = await database;
@@ -707,30 +1012,78 @@ class DatabaseHelper {
       // Also get documents from old group structure for backward compatibility
       final groups = await getAllGroups();
       final List<Document> documents = [];
+      final Set<int> processedDocumentIds = {}; // Track processed document IDs to avoid duplicates
 
       // First, add documents from new Documents table
       for (final map in maps) {
         try {
-          documents.add(Document.fromMap(map));
+          final doc = Document.fromMap(map);
+          documents.add(doc);
+          if (doc.id != null) {
+            processedDocumentIds.add(doc.id!);
+          }
         } catch (e) {
           log('Error parsing document from Documents table: $e');
         }
       }
 
       // Then, add documents from old group structure (for backward compatibility)
+      // Process all groups and add their files as documents
+      // If a group has a corresponding document in Documents table, we still process it
+      // because the group might have additional files that should be shown
       for (final group in groups) {
         if (group[_keyName]?.toString() == _binFolder) continue;
         
         final groupName = group[_keyName]?.toString() ?? '';
+        if (groupName.isEmpty) continue;
+        
+        final tableName = _validateTableName(groupName);
+        
+        // Check if table exists before trying to get docs
+        if (!await _tableExists(tableName)) {
+          log('Skipping group $groupName - table does not exist');
+          continue;
+        }
+        
         final docs = await getGroupDocs(groupName);
+        
+        // Check if there's a corresponding document in Documents table for this group
+        final hasCorrespondingDocument = documents.any((doc) => 
+          doc.title == groupName && doc.id != null
+        );
         
         for (final doc in docs) {
           try {
+            final docId = doc[_keyId] as int?;
+            final docTitle = doc[_keyImgName]?.toString() ?? '';
+            final docPath = doc[_keyImgPath]?.toString() ?? '';
+            
+            // If this group has a corresponding document, check if this file matches it
+            // to avoid duplicates
+            if (hasCorrespondingDocument) {
+              final correspondingDoc = documents.firstWhere(
+                (d) => d.title == groupName,
+                orElse: () => Document(
+                  title: '',
+                  type: '',
+                  imagePath: '',
+                  createdAt: DateTime.now(),
+                ),
+              );
+              
+              // Skip if this file matches the corresponding document (same path)
+              if (correspondingDoc.imagePath == docPath && 
+                  correspondingDoc.title == docTitle) {
+                continue;
+              }
+            }
+            
+            // Create document from group file
             documents.add(Document(
-              id: doc[_keyId] as int?,
-              title: doc[_keyImgName]?.toString() ?? '',
+              id: docId,
+              title: docTitle,
               type: 'Document',
-              imagePath: doc[_keyImgPath]?.toString() ?? '',
+              imagePath: docPath,
               createdAt: group[_keyDate] != null 
                   ? DateTime.tryParse(group[_keyDate].toString()) ?? DateTime.now()
                   : DateTime.now(),
@@ -751,7 +1104,9 @@ class DatabaseHelper {
     }
   }
 
-  /// Get document by ID from Documents table
+  /// READ: Get document by ID
+  /// @param id: Document ID
+  /// @returns: Document object or null if not found
   Future<Document?> getDocumentById(int id) async {
     try {
       final db = await database;
@@ -802,67 +1157,185 @@ class DatabaseHelper {
     }
   }
 
-  /// Update document (converts to group structure)
+  /// UPDATE: Update an existing document
+  /// @param document: Document object with updated data
+  /// @returns: Number of rows affected
+  /// @throws: Exception if document ID is null or document not found
   Future<int> updateDocument(Document document) async {
-    if (document.id == null) return 0;
-    
-    // Find which group contains this document
-    final groups = await getAllGroups();
-    
-    for (final group in groups) {
-      if (group[_keyName]?.toString() == _binFolder) continue;
+    try {
+      if (document.id == null) {
+        throw Exception('Document ID is required for update');
+      }
       
-      final groupName = group[_keyName]?.toString() ?? '';
-      final docs = await getGroupDocs(groupName);
+      final db = await database;
       
-      for (final doc in docs) {
-        if (doc[_keyId] == document.id) {
-          // Update document in group
-          await updateGroupListDoc(
-            groupName,
-            doc[_keyImgName]?.toString() ?? '',
-            document.imagePath,
-          );
-          
-          if (document.title != doc[_keyImgName]?.toString()) {
-            await renameGroupListDocNote(
+      // Validate document data
+      if (document.title.trim().isEmpty) {
+        throw Exception('Document title cannot be empty');
+      }
+      if (document.imagePath.trim().isEmpty) {
+        throw Exception('Document image path cannot be empty');
+      }
+      
+      // Check if document exists in Documents table
+      final existingDoc = await getDocumentById(document.id!);
+      if (existingDoc != null) {
+        // Update in Documents table
+        final docToUpdate = document.copyWith(updatedAt: DateTime.now());
+        final count = await db.update(
+          _tableDocuments,
+          docToUpdate.toMap(),
+          where: 'id = ?',
+          whereArgs: [document.id],
+        );
+        log('Document updated: ${document.id}');
+        return count;
+      }
+      
+      // Fallback: Try to update in group structure (for backward compatibility)
+      final groups = await getAllGroups();
+      
+      for (final group in groups) {
+        if (group[_keyName]?.toString() == _binFolder) continue;
+        
+        final groupName = group[_keyName]?.toString() ?? '';
+        final docs = await getGroupDocs(groupName);
+        
+        for (final doc in docs) {
+          if (doc[_keyId] == document.id) {
+            // Update document in group
+            await updateGroupListDoc(
               groupName,
               doc[_keyImgName]?.toString() ?? '',
-              document.title,
+              document.imagePath,
             );
+            
+            if (document.title != doc[_keyImgName]?.toString()) {
+              await renameGroupListDocNote(
+                groupName,
+                doc[_keyImgName]?.toString() ?? '',
+                document.title,
+              );
+            }
+            
+            log('Document updated in group: ${document.id}');
+            return 1;
           }
-          
-          return 1;
         }
       }
+      
+      throw Exception('Document not found');
+    } catch (e) {
+      log('Error updating document: $e');
+      rethrow;
     }
-    
-    return 0;
   }
 
-  /// Delete document
+  /// DELETE: Delete a document permanently
+  /// @param id: Document ID to delete
+  /// @returns: Number of rows affected
+  /// @throws: Exception if document not found
   Future<int> deleteDocument(int id) async {
-    final groups = await getAllGroups();
-    
-    for (final group in groups) {
-      if (group[_keyName]?.toString() == _binFolder) continue;
+    try {
+      final db = await database;
       
-      final groupName = group[_keyName]?.toString() ?? '';
-      final docs = await getGroupDocs(groupName);
+      // Try to delete from Documents table first
+      final existingDoc = await getDocumentById(id);
+      if (existingDoc != null) {
+        final count = await db.delete(
+          _tableDocuments,
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        log('Document deleted: $id');
+        return count;
+      }
       
-      for (final doc in docs) {
-        if (doc[_keyId] == id) {
-          await deleteSingleDoc(
-            groupName,
-            doc[_keyImgName]?.toString() ?? '',
-          );
-          return 1;
+      // Fallback: Try to delete from group structure (for backward compatibility)
+      final groups = await getAllGroups();
+      
+      for (final group in groups) {
+        if (group[_keyName]?.toString() == _binFolder) continue;
+        
+        final groupName = group[_keyName]?.toString() ?? '';
+        final docs = await getGroupDocs(groupName);
+        
+        for (final doc in docs) {
+          if (doc[_keyId] == id) {
+            await deleteSingleDoc(
+              groupName,
+              doc[_keyImgName]?.toString() ?? '',
+            );
+            log('Document deleted from group: $id');
+            return 1;
+          }
         }
       }
+      
+      throw Exception('Document not found');
+    } catch (e) {
+      log('Error deleting document: $e');
+      rethrow;
     }
-    
-    return 0;
   }
+  
+  /// DELETE: Soft delete a document (move to trash)
+  /// @param id: Document ID to soft delete
+  /// @returns: Number of rows affected
+  Future<int> softDeleteDocument(int id) async {
+    try {
+      final db = await database;
+      
+      // Try to soft delete from Documents table first
+      final existingDoc = await getDocumentById(id);
+      if (existingDoc != null) {
+        final now = DateTime.now();
+        final count = await db.update(
+          _tableDocuments,
+          {
+            'isDeleted': 1,
+            'deleted_at': now.toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        log('Document soft deleted: $id');
+        return count;
+      }
+      
+      // Fallback: Use moveToTrash for group structure
+      return await moveToTrash(id);
+    } catch (e) {
+      log('Error soft deleting document: $e');
+      rethrow;
+    }
+  }
+  
+  /// RESTORE: Restore a soft-deleted document
+  /// @param id: Document ID to restore
+  /// @returns: Number of rows affected
+  Future<int> restoreDocument(int id) async {
+    try {
+      final db = await database;
+      final count = await db.update(
+        _tableDocuments,
+        {
+          'isDeleted': 0,
+          'deleted_at': null,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      log('Document restored: $id');
+      return count;
+    } catch (e) {
+      log('Error restoring document: $e');
+      rethrow;
+    }
+  }
+  
+  // Legacy method for backward compatibility
+  Future<int> insertDocument(Document document) => createDocument(document);
 
   /// Move document to trash (converts to bin structure)
   Future<int> moveToTrash(int id) async {
@@ -921,148 +1394,330 @@ class DatabaseHelper {
     return documents;
   }
 
-  /// Get documents by tag ID (converts from group structure)
+  /// READ: Get documents by tag ID
+  /// @param tagId: Tag ID to filter by (null for untagged documents)
+  /// @returns: List of documents with the specified tag
   Future<List<Document>> getDocumentsByTagId(int? tagId) async {
-    final allDocs = await getAllDocuments();
-    if (tagId == null) {
-      return allDocs.where((doc) => doc.tagId == null).toList();
-    }
-    return allDocs.where((doc) => doc.tagId == tagId).toList();
-  }
-
-  /// Insert document detail (converts to group structure)
-  Future<int> insertDocumentDetail(DocumentDetail detail) async {
-    // Get parent document to find group
-    final parentDoc = await getDocumentById(detail.documentId);
-    if (parentDoc == null) {
-      throw Exception('Parent document not found');
-    }
-
-    // Use parent document title as group name
-    final groupName = parentDoc.title;
-    
-    return await addGroupDoc(
-      groupName: groupName,
-      imgPath: detail.imagePath,
-      imgName: detail.title,
-      imgNote: '',
-    );
-  }
-
-  /// Get document details by document ID
-  Future<List<DocumentDetail>> getDocumentDetailsByDocumentId(int documentId) async {
-    final parentDoc = await getDocumentById(documentId);
-    if (parentDoc == null) {
+    try {
+      final db = await database;
+      
+      // Query from Documents table
+      final List<Map<String, dynamic>> maps = await db.query(
+        _tableDocuments,
+        where: tagId == null 
+            ? 'tag_id IS NULL AND isDeleted = ?'
+            : 'tag_id = ? AND isDeleted = ?',
+        whereArgs: tagId == null ? [0] : [tagId, 0],
+        orderBy: 'created_at DESC',
+      );
+      
+      final documents = maps.map((map) => Document.fromMap(map)).toList();
+      
+      // Also get from group structure for backward compatibility
+      final allDocs = await getAllDocuments();
+      final groupDocs = allDocs.where((doc) {
+        if (tagId == null) {
+          return doc.tagId == null && !documents.any((d) => d.id == doc.id);
+        }
+        return doc.tagId == tagId && !documents.any((d) => d.id == doc.id);
+      }).toList();
+      
+      return [...documents, ...groupDocs];
+    } catch (e) {
+      log('Error getting documents by tag ID: $e');
       return [];
     }
-
-    final groupName = parentDoc.title;
-    final docs = await getGroupDocs(groupName);
-    
-    return docs.map((doc) {
-      return DocumentDetail(
-        id: doc[_keyId] as int?,
-        documentId: documentId,
-        title: doc[_keyImgName]?.toString() ?? '',
-        type: 'Document',
-        imagePath: doc[_keyImgPath]?.toString() ?? '',
-        createdAt: parentDoc.createdAt,
-        updatedAt: parentDoc.updatedAt,
-      );
-    }).toList();
   }
-
-  /// Update document detail
-  Future<int> updateDocumentDetail(DocumentDetail detail) async {
-    if (detail.id == null) {
-      throw Exception('Document detail ID is required');
-    }
-
-    // Get parent document to find group
-    final parentDoc = await getDocumentById(detail.documentId);
-    if (parentDoc == null) {
-      throw Exception('Parent document not found');
-    }
-
-    final groupName = parentDoc.title;
-    final docs = await getGroupDocs(groupName);
-    
-    // Find the document detail by ID to get old name
-    String? oldName;
-    for (final doc in docs) {
-      if (doc[_keyId] == detail.id) {
-        oldName = doc[_keyImgName]?.toString();
-        break;
-      }
-    }
-    
-    if (oldName == null) {
-      throw Exception('Document detail not found');
-    }
-    
-    // Update document path if changed
-    if (detail.imagePath.isNotEmpty) {
-      await updateGroupListDoc(groupName, oldName, detail.imagePath);
-    }
-    
-    // Update document name if changed
-    if (detail.title != oldName) {
-      await renameGroupListDocNote(groupName, oldName, detail.title);
-    }
-    
-    // Update document note if needed (if we add note support)
-    // await updateGroupListDocNote(groupName, detail.title, detail.note);
-    
-    return 1;
-  }
-
-  /// Move document detail to trash
-  Future<int> moveDocumentDetailToTrash(int id) async {
-    // Find which group contains this document detail
-    final groups = await getAllGroups();
-    
-    for (final group in groups) {
-      if (group[_keyName]?.toString() == _binFolder) continue;
+  
+  /// READ: Get favourite documents
+  /// @returns: List of favourite documents
+  Future<List<Document>> getFavouriteDocuments() async {
+    try {
+      final db = await database;
       
-      final groupName = group[_keyName]?.toString() ?? '';
+      final List<Map<String, dynamic>> maps = await db.query(
+        _tableDocuments,
+        where: 'isFavourite = ? AND isDeleted = ?',
+        whereArgs: [1, 0],
+        orderBy: 'created_at DESC',
+      );
+      
+      return maps.map((map) => Document.fromMap(map)).toList();
+    } catch (e) {
+      log('Error getting favourite documents: $e');
+      return [];
+    }
+  }
+  
+  /// UPDATE: Toggle favourite status of a document
+  /// @param id: Document ID
+  /// @param isFavourite: New favourite status
+  /// @returns: Number of rows affected
+  Future<int> toggleFavourite(int id, bool isFavourite) async {
+    try {
+      final db = await database;
+      final count = await db.update(
+        _tableDocuments,
+        {'isFavourite': isFavourite ? 1 : 0},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      log('Document favourite toggled: $id -> $isFavourite');
+      return count;
+    } catch (e) {
+      log('Error toggling favourite: $e');
+      rethrow;
+    }
+  }
+
+  // ==================== DOCUMENT DETAILS CRUD OPERATIONS ====================
+  
+  /// CREATE: Insert a new document detail
+  /// @param detail: DocumentDetail object to insert
+  /// @returns: The ID of the inserted document detail
+  /// @throws: Exception if parent document not found
+  Future<int> createDocumentDetail(DocumentDetail detail) async {
+    try {
+      // Validate document detail data
+      if (detail.title.trim().isEmpty) {
+        throw Exception('Document detail title cannot be empty');
+      }
+      if (detail.imagePath.trim().isEmpty) {
+        throw Exception('Document detail image path cannot be empty');
+      }
+      
+      // Get parent document to find group
+      final parentDoc = await getDocumentById(detail.documentId);
+      if (parentDoc == null) {
+        throw Exception('Parent document not found');
+      }
+
+      // Use parent document title as group name
+      final groupName = parentDoc.title;
+      
+      final id = await addGroupDoc(
+        groupName: groupName,
+        imgPath: detail.imagePath,
+        imgName: detail.title,
+        imgNote: '',
+      );
+      
+      log('Document detail created with ID: $id');
+      return id;
+    } catch (e) {
+      log('Error creating document detail: $e');
+      rethrow;
+    }
+  }
+
+  /// READ: Get document details by document ID
+  /// @param documentId: Parent document ID
+  /// @returns: List of document details for the given document
+  Future<List<DocumentDetail>> getDocumentDetailsByDocumentId(int documentId) async {
+    try {
+      final parentDoc = await getDocumentById(documentId);
+      if (parentDoc == null) {
+        return [];
+      }
+
+      final groupName = parentDoc.title;
       final docs = await getGroupDocs(groupName);
       
-      for (final doc in docs) {
-        if (doc[_keyId] == id) {
-          await moveToBin(
-            oldFolderName: groupName,
-            docData: doc,
-          );
-          
-          // Delete from original group
-          await deleteSingleDoc(
-            groupName,
-            doc[_keyImgName]?.toString() ?? '',
-          );
-          
-          return 1;
+      return docs.map((doc) {
+        return DocumentDetail(
+          id: doc[_keyId] as int?,
+          documentId: documentId,
+          title: doc[_keyImgName]?.toString() ?? '',
+          type: 'Document',
+          imagePath: doc[_keyImgPath]?.toString() ?? '',
+          createdAt: parentDoc.createdAt,
+          updatedAt: parentDoc.updatedAt,
+        );
+      }).toList();
+    } catch (e) {
+      log('Error getting document details: $e');
+      return [];
+    }
+  }
+  
+  /// READ: Get document detail by ID
+  /// @param id: Document detail ID
+  /// @returns: DocumentDetail object or null if not found
+  Future<DocumentDetail?> getDocumentDetailById(int id) async {
+    try {
+      final groups = await getAllGroups();
+      
+      for (final group in groups) {
+        if (group[_keyName]?.toString() == _binFolder) continue;
+        
+        final groupName = group[_keyName]?.toString() ?? '';
+        final docs = await getGroupDocs(groupName);
+        
+        for (final doc in docs) {
+          if (doc[_keyId] == id) {
+            // Find parent document
+            final parentDoc = await getDocumentById(
+              int.tryParse(group[_keyTag]?.toString() ?? '') ?? 0
+            );
+            
+            return DocumentDetail(
+              id: doc[_keyId] as int?,
+              documentId: parentDoc?.id ?? 0,
+              title: doc[_keyImgName]?.toString() ?? '',
+              type: 'Document',
+              imagePath: doc[_keyImgPath]?.toString() ?? '',
+              createdAt: parentDoc?.createdAt ?? DateTime.now(),
+              updatedAt: parentDoc?.updatedAt ?? DateTime.now(),
+            );
+          }
         }
       }
+      
+      return null;
+    } catch (e) {
+      log('Error getting document detail by ID: $e');
+      return null;
     }
-    
-    return 0;
   }
 
-  /// Toggle favourite status
-  Future<int> toggleFavourite(int id, bool isFavourite) async {
-    // In the new structure, favourites are not directly supported
-    // This is a compatibility method that does nothing for now
-    // You can implement this by adding a favourite column to group tables if needed
-    return 0;
+  /// UPDATE: Update an existing document detail
+  /// @param detail: DocumentDetail object with updated data
+  /// @returns: Number of rows affected
+  /// @throws: Exception if document detail ID is null or not found
+  Future<int> updateDocumentDetail(DocumentDetail detail) async {
+    try {
+      if (detail.id == null) {
+        throw Exception('Document detail ID is required for update');
+      }
+      
+      // Validate document detail data
+      if (detail.title.trim().isEmpty) {
+        throw Exception('Document detail title cannot be empty');
+      }
+      if (detail.imagePath.trim().isEmpty) {
+        throw Exception('Document detail image path cannot be empty');
+      }
+
+      // Get parent document to find group
+      final parentDoc = await getDocumentById(detail.documentId);
+      if (parentDoc == null) {
+        throw Exception('Parent document not found');
+      }
+
+      final groupName = parentDoc.title;
+      final docs = await getGroupDocs(groupName);
+      
+      // Find the document detail by ID to get old name
+      String? oldName;
+      for (final doc in docs) {
+        if (doc[_keyId] == detail.id) {
+          oldName = doc[_keyImgName]?.toString();
+          break;
+        }
+      }
+      
+      if (oldName == null) {
+        throw Exception('Document detail not found');
+      }
+      
+      // Update document path if changed
+      if (detail.imagePath.isNotEmpty) {
+        await updateGroupListDoc(groupName, oldName, detail.imagePath);
+      }
+      
+      // Update document name if changed
+      if (detail.title != oldName) {
+        await renameGroupListDocNote(groupName, oldName, detail.title);
+      }
+      
+      log('Document detail updated: ${detail.id}');
+      return 1;
+    } catch (e) {
+      log('Error updating document detail: $e');
+      rethrow;
+    }
   }
 
-  /// Get favourite documents
-  Future<List<Document>> getFavouriteDocuments() async {
-    // In the new structure, favourites are not directly supported
-    // Return empty list for now
-    // You can implement this by adding a favourite column to group tables if needed
-    return [];
+  /// DELETE: Delete a document detail permanently
+  /// @param id: Document detail ID to delete
+  /// @returns: Number of rows affected
+  /// @throws: Exception if document detail not found
+  Future<int> deleteDocumentDetail(int id) async {
+    try {
+      // Find which group contains this document detail
+      final groups = await getAllGroups();
+      
+      for (final group in groups) {
+        if (group[_keyName]?.toString() == _binFolder) continue;
+        
+        final groupName = group[_keyName]?.toString() ?? '';
+        final docs = await getGroupDocs(groupName);
+        
+        for (final doc in docs) {
+          if (doc[_keyId] == id) {
+            await deleteSingleDoc(
+              groupName,
+              doc[_keyImgName]?.toString() ?? '',
+            );
+            log('Document detail deleted: $id');
+            return 1;
+          }
+        }
+      }
+      
+      throw Exception('Document detail not found');
+    } catch (e) {
+      log('Error deleting document detail: $e');
+      rethrow;
+    }
   }
+  
+  /// DELETE: Soft delete a document detail (move to trash)
+  /// @param id: Document detail ID to soft delete
+  /// @returns: Number of rows affected
+  Future<int> softDeleteDocumentDetail(int id) async {
+    try {
+      // Find which group contains this document detail
+      final groups = await getAllGroups();
+      
+      for (final group in groups) {
+        if (group[_keyName]?.toString() == _binFolder) continue;
+        
+        final groupName = group[_keyName]?.toString() ?? '';
+        final docs = await getGroupDocs(groupName);
+        
+        for (final doc in docs) {
+          if (doc[_keyId] == id) {
+            await moveToBin(
+              oldFolderName: groupName,
+              docData: doc,
+            );
+            
+            // Delete from original group
+            await deleteSingleDoc(
+              groupName,
+              doc[_keyImgName]?.toString() ?? '',
+            );
+            
+            log('Document detail moved to trash: $id');
+            return 1;
+          }
+        }
+      }
+      
+      throw Exception('Document detail not found');
+    } catch (e) {
+      log('Error soft deleting document detail: $e');
+      rethrow;
+    }
+  }
+  
+  // Legacy method for backward compatibility
+  Future<int> insertDocumentDetail(DocumentDetail detail) => createDocumentDetail(detail);
+  
+  // Legacy method for backward compatibility
+  Future<int> moveDocumentDetailToTrash(int id) => softDeleteDocumentDetail(id);
+
 
   /// Copy document with details
   Future<int> copyDocumentWithDetails(int documentId, int? targetTagId) async {
@@ -1117,109 +1772,204 @@ class DatabaseHelper {
     return 1;
   }
 
-  /// Tags CRUD Operations
-  Future<int> insertTag(Tag tag) async {
-    final db = await database;
-    
-    // Check if tag already exists (case-insensitive)
-    final existing = await tagExists(tag.title);
-    if (existing) {
-      throw Exception('Tag "${tag.title}" already exists');
-    }
+  // ==================== TAGS CRUD OPERATIONS ====================
+  
+  /// CREATE: Insert a new tag
+  /// @param tag: Tag object to insert
+  /// @returns: The ID of the inserted tag
+  /// @throws: Exception if tag already exists
+  Future<int> createTag(Tag tag) async {
+    try {
+      final db = await database;
+      
+      // Validate tag title
+      if (tag.title.trim().isEmpty) {
+        throw Exception('Tag title cannot be empty');
+      }
+      
+      // Check if tag already exists (case-insensitive)
+      final existing = await tagExists(tag.title);
+      if (existing) {
+        throw Exception('Tag "${tag.title}" already exists');
+      }
 
-    final now = DateTime.now();
-    final tagToInsert = tag.copyWith(createdAt: now, updatedAt: now);
-    return await db.insert('Tags', tagToInsert.toMap());
+      final now = DateTime.now();
+      final tagToInsert = tag.copyWith(createdAt: now, updatedAt: now);
+      final id = await db.insert('Tags', tagToInsert.toMap());
+      log('Tag created with ID: $id');
+      return id;
+    } catch (e) {
+      log('Error creating tag: $e');
+      rethrow;
+    }
   }
 
+  /// READ: Get all tags
+  /// @returns: List of all tags, ordered by default status and creation date
   Future<List<Tag>> getAllTags() async {
-    final db = await database;
-    // Order by is_default DESC (default tags first), then by created_at
-    final result = await db.query(
-      'Tags',
-      orderBy: 'is_default DESC, created_at DESC',
-    );
-    return result.map((map) => Tag.fromMap(map)).toList();
+    try {
+      final db = await database;
+      final result = await db.query(
+        'Tags',
+        orderBy: 'is_default DESC, created_at DESC',
+      );
+      return result.map((map) => Tag.fromMap(map)).toList();
+    } catch (e) {
+      log('Error getting all tags: $e');
+      return [];
+    }
   }
 
+  /// READ: Get tag by ID
+  /// @param id: Tag ID
+  /// @returns: Tag object or null if not found
   Future<Tag?> getTagById(int id) async {
-    final db = await database;
-    final result = await db.query('Tags', where: 'id = ?', whereArgs: [id]);
-    if (result.isEmpty) return null;
-    return Tag.fromMap(result.first);
+    try {
+      final db = await database;
+      final result = await db.query(
+        'Tags',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (result.isEmpty) return null;
+      return Tag.fromMap(result.first);
+    } catch (e) {
+      log('Error getting tag by ID: $e');
+      return null;
+    }
   }
 
-  /// Check if a tag with the given name already exists (case-insensitive)
-  Future<bool> tagExists(String tagName) async {
-    final db = await database;
-    final result = await db.query(
-      'Tags',
-      where: 'LOWER(title) = LOWER(?)',
-      whereArgs: [tagName.trim()],
-    );
-    return result.isNotEmpty;
-  }
-
-  /// Get tag by name (case-insensitive)
+  /// READ: Get tag by name (case-insensitive)
+  /// @param tagName: Tag name to search for
+  /// @returns: Tag object or null if not found
   Future<Tag?> getTagByName(String tagName) async {
-    final db = await database;
-    final result = await db.query(
-      'Tags',
-      where: 'LOWER(title) = LOWER(?)',
-      whereArgs: [tagName.trim()],
-    );
-    if (result.isEmpty) return null;
-    return Tag.fromMap(result.first);
+    try {
+      final db = await database;
+      final result = await db.query(
+        'Tags',
+        where: 'LOWER(title) = LOWER(?)',
+        whereArgs: [tagName.trim()],
+        limit: 1,
+      );
+      if (result.isEmpty) return null;
+      return Tag.fromMap(result.first);
+    } catch (e) {
+      log('Error getting tag by name: $e');
+      return null;
+    }
   }
 
+  /// READ: Check if tag exists (case-insensitive)
+  /// @param tagName: Tag name to check
+  /// @returns: True if tag exists, false otherwise
+  Future<bool> tagExists(String tagName) async {
+    try {
+      final db = await database;
+      final result = await db.query(
+        'Tags',
+        where: 'LOWER(title) = LOWER(?)',
+        whereArgs: [tagName.trim()],
+        limit: 1,
+      );
+      return result.isNotEmpty;
+    } catch (e) {
+      log('Error checking if tag exists: $e');
+      return false;
+    }
+  }
+
+  /// UPDATE: Update an existing tag
+  /// @param tag: Tag object with updated data
+  /// @returns: Number of rows affected
+  /// @throws: Exception if tag is default or name already exists
   Future<int> updateTag(Tag tag) async {
-    final db = await database;
-    
-    // Prevent updating default tags
-    if (tag.isDefault) {
-      throw Exception('Cannot update default tags');
-    }
+    try {
+      if (tag.id == null) {
+        throw Exception('Tag ID is required for update');
+      }
+      
+      final db = await database;
+      
+      // Prevent updating default tags
+      final existingTag = await getTagById(tag.id!);
+      if (existingTag == null) {
+        throw Exception('Tag not found');
+      }
+      
+      if (existingTag.isDefault) {
+        throw Exception('Cannot update default tags');
+      }
 
-    // Check if new name already exists (excluding current tag)
-    final existingTag = await getTagByName(tag.title);
-    if (existingTag != null && existingTag.id != tag.id) {
-      throw Exception('Tag "${tag.title}" already exists');
-    }
+      // Validate new title
+      if (tag.title.trim().isEmpty) {
+        throw Exception('Tag title cannot be empty');
+      }
 
-    final tagToUpdate = tag.copyWith(updatedAt: DateTime.now());
-    return await db.update(
-      'Tags',
-      tagToUpdate.toMap(),
-      where: 'id = ? AND is_default = 0',
-      whereArgs: [tag.id],
-    );
+      // Check if new name already exists (excluding current tag)
+      final tagWithSameName = await getTagByName(tag.title);
+      if (tagWithSameName != null && tagWithSameName.id != tag.id) {
+        throw Exception('Tag "${tag.title}" already exists');
+      }
+
+      final tagToUpdate = tag.copyWith(updatedAt: DateTime.now());
+      final count = await db.update(
+        'Tags',
+        tagToUpdate.toMap(),
+        where: 'id = ? AND is_default = 0',
+        whereArgs: [tag.id],
+      );
+      log('Tag updated: ${tag.id}');
+      return count;
+    } catch (e) {
+      log('Error updating tag: $e');
+      rethrow;
+    }
   }
 
+  /// DELETE: Delete a tag
+  /// @param id: Tag ID to delete
+  /// @returns: Number of rows affected
+  /// @throws: Exception if tag is default
   Future<int> deleteTag(int id) async {
-    final db = await database;
-    
-    // Check if tag is default
-    final tag = await getTagById(id);
-    if (tag != null && tag.isDefault) {
-      throw Exception('Cannot delete default tags');
+    try {
+      final db = await database;
+      
+      // Check if tag exists and is default
+      final tag = await getTagById(id);
+      if (tag == null) {
+        throw Exception('Tag not found');
+      }
+      
+      if (tag.isDefault) {
+        throw Exception('Cannot delete default tags');
+      }
+
+      // Update all groups that use this tag to remove the tag reference
+      final tagString = id.toString();
+      await db.update(
+        _tableAllDocs,
+        {_keyTag: ''},
+        where: '$_keyTag = ?',
+        whereArgs: [tagString],
+      );
+
+      // Delete the tag
+      final count = await db.delete(
+        'Tags',
+        where: 'id = ? AND is_default = 0',
+        whereArgs: [id],
+      );
+      log('Tag deleted: $id');
+      return count;
+    } catch (e) {
+      log('Error deleting tag: $e');
+      rethrow;
     }
-
-    // Update all groups that use this tag to remove the tag reference
-    final tagString = id.toString();
-    await db.update(
-      _tableAllDocs,
-      {_keyTag: ''},
-      where: '$_keyTag = ?',
-      whereArgs: [tagString],
-    );
-
-    // Delete the tag (only if not default)
-    return await db.delete(
-      'Tags',
-      where: 'id = ? AND is_default = 0',
-      whereArgs: [id],
-    );
   }
+
+  // Legacy method for backward compatibility
+  Future<int> insertTag(Tag tag) => createTag(tag);
 
   /// Search documents
   Future<List<Document>> searchDocuments(String query) async {
@@ -1229,26 +1979,66 @@ class DatabaseHelper {
     }).toList();
   }
 
-  /// Statistics
+  // ==================== STATISTICS METHODS ====================
+  
+  /// STATISTICS: Get total document count
+  /// @returns: Total number of non-deleted documents
   Future<int> getDocumentCount() async {
-    final groups = await getAllGroups();
-    int count = 0;
-    for (final group in groups) {
-      if (group[_keyName]?.toString() == _binFolder) continue;
-      final docs = await getGroupDocs(group[_keyName]?.toString() ?? '');
-      count += docs.length;
+    try {
+      final db = await database;
+      
+      // Count from Documents table
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM $_tableDocuments WHERE isDeleted = ?',
+        [0],
+      );
+      final docTableCount = Sqflite.firstIntValue(result) ?? 0;
+      
+      // Count from group structure (for backward compatibility)
+      final groups = await getAllGroups();
+      int groupCount = 0;
+      for (final group in groups) {
+        if (group[_keyName]?.toString() == _binFolder) continue;
+        final docs = await getGroupDocs(group[_keyName]?.toString() ?? '');
+        groupCount += docs.length;
+      }
+      
+      return docTableCount + groupCount;
+    } catch (e) {
+      log('Error getting document count: $e');
+      return 0;
     }
-    return count;
   }
 
+  /// STATISTICS: Get total tag count
+  /// @returns: Total number of tags
   Future<int> getTagCount() async {
-    final tags = await getAllTags();
-    return tags.length;
+    try {
+      final db = await database;
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM Tags',
+      );
+      return Sqflite.firstIntValue(result) ?? 0;
+    } catch (e) {
+      log('Error getting tag count: $e');
+      return 0;
+    }
   }
 
+  /// STATISTICS: Get count of favourite documents
+  /// @returns: Number of favourite documents
   Future<int> getFavouriteCount() async {
-    // Not directly supported in Kotlin structure
-    return 0;
+    try {
+      final db = await database;
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM $_tableDocuments WHERE isFavourite = ? AND isDeleted = ?',
+        [1, 0],
+      );
+      return Sqflite.firstIntValue(result) ?? 0;
+    } catch (e) {
+      log('Error getting favourite count: $e');
+      return 0;
+    }
   }
 
   Future<int> getDocumentDetailCount(int documentId) async {

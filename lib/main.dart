@@ -20,7 +20,6 @@ import 'Screens/qr_generator/qr_generator_screen.dart';
 import 'Screens/scan_pdf/scan_pdf_filter_screen.dart';
 import 'Screens/scan_pdf/scan_pdf_progress_screen.dart';
 import 'Screens/scan_pdf/scan_pdf_viewer_screen.dart';
-import 'Screens/photo_editor/photo_editor_screen.dart';
 import 'Screens/esign/sign_list_screen.dart';
 import 'Screens/esign/sign_create_screen.dart';
 import 'modules/split_pdf/split_pdf_screen.dart';
@@ -103,16 +102,7 @@ class MyApp extends StatelessWidget {
               name: AppRoutes.qrGenerator,
               page: () => const QRGeneratorScreen(),
             ),
-            GetPage(
-              name: AppRoutes.photoEditor,
-              page: () {
-                final arguments = Get.arguments as Map<String, dynamic>?;
-                final rawList = (arguments?['imageFiles'] as List?) ?? [];
-                final files = rawList.map((e) => e as File).toList();
-                return PhotoEditorScreen(imageFiles: files);
-              },
-            ),
-            GetPage(
+          GetPage(
               name: AppRoutes.scanPDFFilter,
               page: () {
                 final arguments = Get.arguments as Map<String, dynamic>?;
@@ -216,9 +206,13 @@ class MyApp extends StatelessWidget {
                 final arguments = Get.arguments as Map<String, dynamic>?;
                 final forExtractText = arguments?['forExtractText'] as bool? ?? false;
                 final forWatermark = arguments?['forWatermark'] as bool? ?? false;
+                final forMerge = arguments?['forMerge'] as bool? ?? false;
+                final forSplit = arguments?['forSplit'] as bool? ?? false;
                 return ImportFilesScreen(
                   forExtractText: forExtractText,
                   forWatermark: forWatermark,
+                  forMerge: forMerge,
+                  forSplit: forSplit,
                 );
               },
             ),

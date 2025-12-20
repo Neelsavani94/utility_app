@@ -97,13 +97,6 @@ class NavigationService {
     return navigateTo(AppRoutes.qrGenerator);
   }
 
-  static Future<dynamic>? toPhotoEditor({required List<File> imageFiles}) {
-    return navigateTo(
-      AppRoutes.photoEditor,
-      arguments: {'imageFiles': imageFiles},
-    );
-  }
-
   static Future<dynamic>? toScanPDF() {
     return navigateTo(AppRoutes.scanPDF);
   }
@@ -228,12 +221,16 @@ class NavigationService {
   static Future<dynamic>? toImportFiles({
     bool forExtractText = false,
     bool forWatermark = false,
+    bool forMerge = false,
+    bool forSplit = false,
   }) {
     return navigateTo(
       AppRoutes.importFiles,
       arguments: {
         'forExtractText': forExtractText,
         'forWatermark': forWatermark,
+        'forMerge': forMerge,
+        'forSplit': forSplit,
       },
     );
   }

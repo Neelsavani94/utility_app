@@ -188,9 +188,10 @@ class FileStorageService {
         thumbnailPath = thumbPath;
       }
 
-      // Create document entry
+      // Create document entry with title format: Doc_epochtime.extension
+      final String docTitle = title ?? 'Doc_$timestamp${_getExtension(finalFileName)}';
       final document = Document(
-        title: title ?? _getFileNameWithoutExtension(finalFileName),
+        title: docTitle,
         type: 'image',
         imagePath: filePath,
         thumbnailPath: thumbnailPath,
@@ -238,9 +239,10 @@ class FileStorageService {
         thumbnailPath = thumbPath;
       }
 
-      // Create document entry
+      // Create document entry with title format: Doc_epochtime.extension
+      final String docTitle = title ?? 'Doc_$timestamp${_getExtension(finalFileName)}';
       final document = Document(
-        title: title ?? _getFileNameWithoutExtension(finalFileName),
+        title: docTitle,
         type: 'pdf',
         imagePath: filePath,
         thumbnailPath: thumbnailPath,

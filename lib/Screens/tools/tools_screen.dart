@@ -126,9 +126,9 @@ class ToolsScreen extends StatelessWidget {
       child: GestureDetector(
         onTap: () {
           if (label == 'Merge PDF') {
-            _openPhotoEditor(context, colorScheme);
+            NavigationService.toImportFiles(forMerge: true);
           } else if (label == 'Split PDF') {
-            NavigationService.toSplitPDF();
+            NavigationService.toImportFiles(forSplit: true);
           } else if (label == 'Extract Texts') {
             NavigationService.toImportFiles(forExtractText: true);
           } else if (label == 'QR Reader') {
@@ -240,31 +240,25 @@ class ToolsScreen extends StatelessWidget {
           
           final ImagePicker picker = ImagePicker();
           try {
-            List<XFile> pickedFiles = [];
-            
-            if (source == ImageSource.camera) {
-              // For camera, pick single image
-              final XFile? pickedFile = await picker.pickImage(
-                source: source,
-                imageQuality: 85,
-              );
-              if (pickedFile != null) {
-                pickedFiles = [pickedFile];
-              }
-            } else {
-              // For gallery, pick multiple images
-              pickedFiles = await picker.pickMultiImage(
-                imageQuality: 85,
-              );
-            }
+            // Pick single image from camera or gallery
+            final XFile? pickedFile = await picker.pickImage(
+              source: source,
+              imageQuality: 85,
+            );
 
-            if (pickedFiles.isNotEmpty) {
-              final imageFiles = pickedFiles.map((f) => File(f.path)).toList();
-              // Navigate to filter screen using original context
+            if (pickedFile != null) {
+              final imageFile = File(pickedFile.path);
+              // Navigate to PhotoEditor directly using original context
               if (navigatorContext.mounted) {
                 // Use a small delay to ensure everything is ready
                 await Future.delayed(const Duration(milliseconds: 100));
-                NavigationService.toScanPDFFilter(imageFiles: imageFiles);
+                
+                // Open photo editor with single image
+                final photoEditorService = PhotoEditorService.instance;
+                await photoEditorService.openEditorAndSave(
+                  context: navigatorContext,
+                  imageFile: imageFile,
+                );
               }
             } else {
               // User cancelled - show message if context is still valid

@@ -12,7 +12,6 @@ class AppRoutes {
   static const String esignCreate = '/esign-create';
   static const String extractText = '/extract-text';
   static const String qrGenerator = '/qr-generator';
-  static const String photoEditor = '/photo-editor';
   static const String scanPDF = '/scan-pdf';
   static const String scanPDFFilter = '/scan-pdf-filter';
   static const String scanPDFProgress = '/scan-pdf-progress';
