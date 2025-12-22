@@ -34,22 +34,50 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     });
 
     try {
-      // Load favorite documents from database
-      final favoriteDocs = await _db.getFavouriteDocuments();
-      final tags = await _db.getAllTags();
-      final tagMap = {for (var tag in tags) tag.id: tag.title};
+      // Load favorite documents from FavouriteDocuments table
+      final favoriteDocs = await _db.getAllFavouriteDocuments();
 
-      // Convert to DocumentModel
-      _favoriteDocuments = favoriteDocs.map((doc) {
-        final category = doc.tagId != null && tagMap.containsKey(doc.tagId)
-            ? tagMap[doc.tagId]!
-            : doc.type;
-        return DocumentModel.fromDocument(
-          doc,
-          category: category,
+      // Convert FavouriteDocuments to DocumentModel
+      _favoriteDocuments = await Future.wait(favoriteDocs.map((favDoc) async {
+        // Get the referenced document to get type
+        final documentId = favDoc['document_id'] as int?;
+        String category = 'document';
+        bool isFavorite = true; // All items in FavouriteDocuments are favorites
+        
+        if (documentId != null) {
+          final document = await _db.getDocument(documentId);
+          if (document != null) {
+            category = document['type']?.toString() ?? 'document';
+          }
+        }
+        
+        // Determine file type from image path extension if type is not available
+        final imagePath = favDoc['Image_path']?.toString() ?? '';
+        if (category == 'document' && imagePath.isNotEmpty) {
+          final extension = imagePath.toLowerCase().split('.').last;
+          if (extension == 'pdf') {
+            category = 'pdf';
+          } else if (['jpg', 'jpeg', 'png', 'gif'].contains(extension)) {
+            category = 'image';
+          }
+        }
+        
+        final createdDate = favDoc['created_date'] != null
+            ? DateTime.tryParse(favDoc['created_date'].toString())
+            : null;
+        
+        return DocumentModel(
+          id: favDoc['id']?.toString() ?? '',
+          name: favDoc['title']?.toString() ?? 'Untitled',
+          createdAt: createdDate ?? DateTime.now(),
           location: 'In this device',
+          category: category,
+          isFavorite: isFavorite,
+          thumbnailPath: favDoc['image_thumbnail']?.toString(),
+          imagePath: imagePath,
+          isDeleted: false,
         );
-      }).toList();
+      }));
 
       setState(() {
         _isLoading = false;
@@ -189,36 +217,25 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     return GestureDetector(
       onTap: () => _handleDocumentTap(context, document),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        margin: const EdgeInsets.only(bottom: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: isDark
-              ? colorScheme.surface.withOpacity(0.6)
-              : Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          color: isDark ? colorScheme.surface : Colors.white,
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: isDark
-                ? colorScheme.outline.withOpacity(0.12)
+                ? colorScheme.outline.withOpacity(0.1)
                 : colorScheme.outline.withOpacity(0.08),
-            width: 1,
+            width: 0.5,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: isDark
-                  ? Colors.black.withOpacity(0.15)
-                  : Colors.black.withOpacity(0.03),
-              blurRadius: 6,
-              offset: const Offset(0, 1),
-            ),
-          ],
         ),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Thumbnail or Icon with subtle gradient
-            _buildDocumentThumbnail(document, colorScheme, 52),
-            const SizedBox(width: 14),
-            // Content - Compact Vertical
+            // Thumbnail on the left
+            _buildDocumentThumbnail(document, colorScheme, 56, isDark),
+            const SizedBox(width: 12),
+            // Content - Title, Date, Location
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -232,47 +249,43 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                       height: 1.3,
+                      letterSpacing: -0.2,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colorScheme.primary.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: Text(
-                      document.category,
-                      style: TextStyle(
-                        color: colorScheme.primary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                  // Date/Time
+                  Text(
+                    document.formattedDate,
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withOpacity(0.6),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      height: 1.2,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  // Time
+                  const SizedBox(height: 4),
+                  // Location with phone icon
                   Row(
                     children: [
                       Icon(
-                        Icons.access_time_rounded,
+                        Icons.phone_android_rounded,
                         size: 12,
-                        color: colorScheme.onSurface.withOpacity(0.45),
+                        color: colorScheme.primary,
                       ),
                       const SizedBox(width: 4),
-                      Text(
-                        document.formattedDate,
-                        style: TextStyle(
-                          color: colorScheme.onSurface.withOpacity(0.55),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w400,
+                      Flexible(
+                        child: Text(
+                          'In this device',
+                          style: TextStyle(
+                            color: colorScheme.onSurface.withOpacity(0.6),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w400,
+                            height: 1.2,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -280,90 +293,139 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 ],
               ),
             ),
-            const SizedBox(width: 10),
-            // Actions - Compact
-            Row(
+            const SizedBox(width: 8),
+            // Right side actions: Tag Button, then Share, Star, More in row
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Favorite
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () async {
-                      await provider.toggleFavorite(document.id);
-                      await _loadFavorites(); // Reload favorites after toggle
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: document.isFavorite
-                            ? Colors.amber.withOpacity(0.12)
-                            : colorScheme.surface.withOpacity(0.6),
-                        borderRadius: BorderRadius.circular(8),
+                // Tag button (showing category) - at top
+                InkWell(
+                  onTap: () {
+                    provider.setSelectedCategory(document.category);
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? colorScheme.primaryContainer.withOpacity(0.3)
+                          : colorScheme.primaryContainer.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: colorScheme.primary.withOpacity(0.2),
+                        width: 0.5,
                       ),
-                      child: Icon(
-                        document.isFavorite
-                            ? Icons.bookmark_rounded
-                            : Icons.bookmark_outline_rounded,
-                        size: 18,
-                        color: document.isFavorite
-                            ? Colors.amber.shade700
-                            : colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                    child: Text(
+                      document.category,
+                      style: TextStyle(
+                        color: colorScheme.primary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.1,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),
-                // Share
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () => _handleShareDocument(context, document),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: colorScheme.surface.withOpacity(0.6),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
+                const SizedBox(height: 8),
+                // Share, Star, More icons in a row
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Share icon
+                    IconButton(
+                      onPressed: () => _handleShareDocument(context, document),
+                      icon: Icon(
                         Icons.share_rounded,
                         size: 18,
-                        color: colorScheme.onSurface.withOpacity(0.5),
+                        color: colorScheme.onSurface.withOpacity(0.7),
                       ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 25,
+                        minHeight: 25,
+                      ),
+                      tooltip: 'Share',
                     ),
-                  ),
-                ),
-                // More
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () {
-                      _showDocumentOptionsBottomSheet(
-                        context,
-                        document,
-                        colorScheme,
-                        isDark,
-                        provider,
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: colorScheme.surface.withOpacity(0.6),
-                        borderRadius: BorderRadius.circular(8),
+                    // Star (Favorite) icon - Remove from favorites
+                    IconButton(
+                      onPressed: () async {
+                        // Get favorite document to get document_id
+                        final favId = int.tryParse(document.id);
+                        if (favId != null) {
+                          final favDoc = await _db.getFavouriteDocument(favId);
+                          if (favDoc != null) {
+                            final documentId = favDoc['document_id'] as int?;
+                            
+                            // Update Document table to set favourite = false
+                            if (documentId != null) {
+                              await _db.updateDocument(documentId, {
+                                'favourite': 0,
+                                'updated_date': DateTime.now().toIso8601String(),
+                              });
+                            }
+                            
+                            // Remove from FavouriteDocuments table
+                            await _db.deleteFavouriteDocument(favId);
+                            
+                            // Reload favorites and home provider
+                            await _loadFavorites();
+                            await provider.loadDocuments();
+                            
+                            if (mounted) {
+                              Fluttertoast.showToast(
+                                msg: '"${document.name}" removed from favorites',
+                                toastLength: Toast.LENGTH_SHORT,
+                                gravity: ToastGravity.BOTTOM,
+                                backgroundColor: Colors.amber,
+                                textColor: Colors.white,
+                              );
+                            }
+                          }
+                        }
+                      },
+                      icon: Icon(
+                        Icons.star_rounded,
+                        size: 18,
+                        color: Colors.amber.shade600,
                       ),
-                      child: Icon(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 25,
+                        minHeight: 25,
+                      ),
+                      tooltip: 'Remove favorite',
+                    ),
+                    // More options (vertical ellipsis)
+                    IconButton(
+                      onPressed: () {
+                        _showDocumentOptionsBottomSheet(
+                          context,
+                          document,
+                          colorScheme,
+                          isDark,
+                          provider,
+                        );
+                      },
+                      icon: Icon(
                         Icons.more_vert_rounded,
                         size: 18,
-                        color: colorScheme.onSurface.withOpacity(0.5),
+                        color: colorScheme.onSurface.withOpacity(0.7),
                       ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 25,
+                        minHeight: 25,
+                      ),
+                      tooltip: 'More options',
                     ),
-                  ),
+                  ],
                 ),
               ],
             ),
@@ -373,9 +435,14 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
   }
 
-  Widget _buildDocumentThumbnail(DocumentModel document, ColorScheme colorScheme, double size) {
+  Widget _buildDocumentThumbnail(
+    DocumentModel document,
+    ColorScheme colorScheme,
+    double size,
+    bool isDark,
+  ) {
     final thumbnailPath = document.thumbnailPath;
-    
+
     // If thumbnail exists and is not empty, show thumbnail
     if (thumbnailPath != null && thumbnailPath.isNotEmpty) {
       final thumbnailFile = File(thumbnailPath);
@@ -383,35 +450,28 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         width: size,
         height: size,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(8),
+          color: colorScheme.surfaceVariant.withOpacity(0.3),
           border: Border.all(
-            color: colorScheme.outline.withOpacity(0.1),
-            width: 1,
+            color: isDark
+                ? colorScheme.outline.withOpacity(0.1)
+                : colorScheme.outline.withOpacity(0.08),
+            width: 0.5,
           ),
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(8),
           child: Image.file(
             thumbnailFile,
             fit: BoxFit.cover,
             errorBuilder: (context, error, stackTrace) {
               // Fallback to icon if thumbnail fails to load
               return Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      colorScheme.primary,
-                      colorScheme.primary.withOpacity(0.8),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                color: colorScheme.surfaceVariant.withOpacity(0.3),
                 child: Icon(
                   Icons.description_rounded,
-                  color: Colors.white,
-                  size: size * 0.5,
+                  color: colorScheme.onSurface.withOpacity(0.4),
+                  size: size * 0.4,
                 ),
               );
             },
@@ -419,26 +479,25 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         ),
       );
     }
-    
-    // Default icon with gradient
+
+    // Default icon - minimal design
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            colorScheme.primary,
-            colorScheme.primary.withOpacity(0.8),
-          ],
+        color: colorScheme.surfaceVariant.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isDark
+              ? colorScheme.outline.withOpacity(0.1)
+              : colorScheme.outline.withOpacity(0.08),
+          width: 0.5,
         ),
-        borderRadius: BorderRadius.circular(12),
       ),
       child: Icon(
         Icons.description_rounded,
-        color: Colors.white,
-        size: size * 0.5,
+        color: colorScheme.onSurface.withOpacity(0.4),
+        size: size * 0.4,
       ),
     );
   }
@@ -570,15 +629,33 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               title: const Text('Move to Trash'),
               onTap: () async {
                 Navigator.pop(context);
-                await provider.moveToTrash(document.id);
-                await _loadFavorites(); // Reload after moving to trash
-                Fluttertoast.showToast(
-                  msg: '"${document.name}" moved to trash',
-                  toastLength: Toast.LENGTH_SHORT,
-                  gravity: ToastGravity.BOTTOM,
-                  backgroundColor: Colors.red,
-                  textColor: Colors.white,
-                );
+                // Get the document_id from FavouriteDocuments
+                final favId = int.tryParse(document.id);
+                if (favId != null) {
+                  final favDoc = await _db.getFavouriteDocument(favId);
+                  if (favDoc != null) {
+                    final documentId = favDoc['document_id'] as int?;
+                    if (documentId != null) {
+                      // Move document to trash (soft delete)
+                      await _db.softDeleteDocument(documentId);
+                      // Remove from FavouriteDocuments
+                      await _db.deleteFavouriteDocument(favId);
+                      // Reload favorites
+                      await _loadFavorites();
+                      // Reload home provider
+                      await provider.loadDocuments();
+                      if (mounted) {
+                        Fluttertoast.showToast(
+                          msg: '"${document.name}" moved to trash',
+                          toastLength: Toast.LENGTH_SHORT,
+                          gravity: ToastGravity.BOTTOM,
+                          backgroundColor: Colors.red,
+                          textColor: Colors.white,
+                        );
+                      }
+                    }
+                  }
+                }
               },
             ),
           ],

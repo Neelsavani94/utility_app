@@ -1,6 +1,9 @@
 import 'dart:io';
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion_pdf;
+import 'package:printing/printing.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../Routes/navigation_service.dart';
 import '../import_files/import_files_screen.dart';
 import '../../Services/database_helper.dart';
@@ -8,17 +11,12 @@ import '../../Services/file_storage_service.dart';
 import '../../Providers/home_provider.dart';
 import 'package:provider/provider.dart';
 import '../../Models/document_model.dart';
-import '../../Models/document_detail_model.dart';
 
 class ArrangeFilesScreen extends StatefulWidget {
   final List<File> files;
   final DocumentModel? document;
 
-  const ArrangeFilesScreen({
-    super.key,
-    required this.files,
-    this.document,
-  });
+  const ArrangeFilesScreen({super.key, required this.files, this.document});
 
   @override
   State<ArrangeFilesScreen> createState() => _ArrangeFilesScreenState();
@@ -36,13 +34,10 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
   void initState() {
     super.initState();
     _fileItems = widget.files.asMap().entries.map((entry) {
-      return FileItem(
-        file: entry.value,
-        orderIndex: entry.key,
-      );
+      return FileItem(file: entry.value, orderIndex: entry.key);
     }).toList();
-    // Initialize all files as selected
-    _selectedIndices = Set.from(List.generate(_fileItems.length, (index) => index));
+    // Initialize with no files selected by default
+    _selectedIndices = <int>{};
     _loadPageCounts();
   }
 
@@ -54,7 +49,9 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
           final file = File(filePath);
           if (await file.exists()) {
             final pdfBytes = await file.readAsBytes();
-            final pdfDocument = PdfDocument(inputBytes: pdfBytes);
+            final pdfDocument = syncfusion_pdf.PdfDocument(
+              inputBytes: pdfBytes,
+            );
             final pageCount = pdfDocument.pages.count;
             pdfDocument.dispose();
 
@@ -78,14 +75,14 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
   Future<void> _addMoreFiles() async {
     // Store old file list temporarily when add button is clicked
     _tempOldFileList = List.from(_fileItems);
-    
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => const ImportFilesScreen(forArrange: true),
       ),
     );
-    
+
     // Handle result if files are returned
     if (result != null && result is List<File>) {
       await _addFilesToList(result);
@@ -102,8 +99,8 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
       setState(() {
         // Clear current list and restore old files first
         _fileItems = List.from(_tempOldFileList!);
-        // Rebuild selected indices for old files
-        _selectedIndices = Set.from(List.generate(_fileItems.length, (index) => index));
+        // Don't auto-select restored files - keep current selection state
+        // _selectedIndices remains unchanged
         // Update order indices for old files
         for (int i = 0; i < _fileItems.length; i++) {
           _fileItems[i] = _fileItems[i].copyWith(orderIndex: i);
@@ -115,29 +112,91 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
 
     // Load page counts for new PDF files and add them after old files
     for (final file in newFiles) {
-      int pageCount = 1;
       if (file.path.toLowerCase().endsWith('.pdf')) {
+        // Convert PDF to images - each page becomes a separate image file
         try {
           if (await file.exists()) {
             final pdfBytes = await file.readAsBytes();
-            final pdfDocument = PdfDocument(inputBytes: pdfBytes);
-            pageCount = pdfDocument.pages.count;
-            pdfDocument.dispose();
+            final pdfDocument = syncfusion_pdf.PdfDocument(
+              inputBytes: pdfBytes,
+            );
+            final pageCount = pdfDocument.pages.count;
+
+            if (pageCount > 0) {
+              // Get temporary directory for saving page images
+              final tempDir = await getTemporaryDirectory();
+              final imagesDir = Directory('${tempDir.path}/arrange_pdf_images');
+              if (!await imagesDir.exists()) {
+                await imagesDir.create(recursive: true);
+              }
+
+              // Convert each PDF page to an image
+              final imageStream = Printing.raster(pdfBytes, dpi: 300);
+
+              int pageIndex = 0;
+              await for (final imageRaster in imageStream) {
+                if (pageIndex >= pageCount) break;
+
+                try {
+                  final imageBytes = await imageRaster.toPng();
+
+                  if (imageBytes.isNotEmpty) {
+                    // Save image to temporary directory
+                    final timestamp = DateTime.now().millisecondsSinceEpoch;
+                    final imageFile = File(
+                      '${imagesDir.path}/page_${timestamp}_${pageIndex + 1}.png',
+                    );
+                    await imageFile.writeAsBytes(imageBytes);
+
+                    // Add image file to the list
+                    setState(() {
+                      final startIndex = _fileItems.length;
+                      _fileItems.add(
+                        FileItem(
+                          file: imageFile,
+                          orderIndex: startIndex,
+                          pageCount: 1, // Each page image is 1 page
+                        ),
+                      );
+                      // Don't auto-select new files - user must manually select them
+                    });
+                  }
+                } catch (e) {
+                  print(
+                    'Error converting PDF page ${pageIndex + 1} to image: $e',
+                  );
+                }
+
+                pageIndex++;
+              }
+
+              pdfDocument.dispose();
+            } else {
+              pdfDocument.dispose();
+              // If PDF has no pages, skip it
+              print('PDF has no pages: ${file.path}');
+            }
           }
         } catch (e) {
-          pageCount = 1;
+          print('Error processing PDF file ${file.path}: $e');
+          // If PDF conversion fails, add the original PDF file as fallback
+          setState(() {
+            final startIndex = _fileItems.length;
+            _fileItems.add(
+              FileItem(file: file, orderIndex: startIndex, pageCount: 1),
+            );
+          });
         }
+      } else {
+        // For non-PDF files (images), add them directly
+        setState(() {
+          final startIndex = _fileItems.length;
+          _fileItems.add(
+            FileItem(file: file, orderIndex: startIndex, pageCount: 1),
+          );
+          // Don't auto-select new files - user must manually select them
+        });
       }
-
-      setState(() {
-        final startIndex = _fileItems.length;
-        _fileItems.add(FileItem(
-          file: file,
-          orderIndex: startIndex,
-          pageCount: pageCount,
-        ));
-        _selectedIndices.add(startIndex);
-      });
     }
   }
 
@@ -189,174 +248,182 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
     try {
       // Get selected files in order
       final selectedFiles = _selectedIndices.toList()..sort();
+      developer.log('=== SAVE FILES START ===');
+      developer.log('Total SELECTED files: ${selectedFiles.length}');
+
       if (selectedFiles.isEmpty) {
         throw Exception('No files selected');
       }
 
       // ========== STEP 1: Save first file as Document ==========
+      developer.log('--- STEP 1: Saving first file as Document ---');
       final firstFileItem = _fileItems[selectedFiles[0]];
       final firstFile = firstFileItem.file;
       final isFirstPDF = firstFile.path.toLowerCase().endsWith('.pdf');
-      
+      final firstFileName = _getFileName(firstFile);
+      developer.log('First file: $firstFileName, isPDF: $isFirstPDF');
+
       int? documentId;
-      Document? document;
-      
+
       if (isFirstPDF) {
         final pdfBytes = await firstFile.readAsBytes();
-        final fileName = _getFileName(firstFile);
         documentId = await _fileStorageService.savePDFFile(
           pdfBytes: pdfBytes,
-          fileName: fileName,
-          title: _getFileNameWithoutExtension(fileName),
+          fileName: firstFileName,
+          title: _getFileNameWithoutExtension(firstFileName),
         );
+        developer.log('✓ PDF file saved to Document table with ID: $documentId');
       } else {
-        final fileName = _getFileName(firstFile);
         documentId = await _fileStorageService.saveImageFileFromFile(
           imageFile: firstFile,
-          title: _getFileNameWithoutExtension(fileName),
+          title: _getFileNameWithoutExtension(firstFileName),
         );
+        developer.log('✓ Image file saved to Document table with ID: $documentId');
       }
 
       if (documentId == null) {
         throw Exception('Failed to save first file');
       }
 
-      // Get the created document
-      document = await _dbHelper.getDocumentById(documentId);
+      // Get the created document to get file paths
+      final document = await _dbHelper.getDocument(documentId);
       if (document == null) {
         throw Exception('Document not found after creation');
       }
 
-      // ========== STEP 2: Create group for backward compatibility ==========
-      // This maintains compatibility with existing group-based structure
-      final groupName = document.title;
-      final groupDate = DateTime.now().toIso8601String();
-      
-      try {
-        await _dbHelper.createGroup(
-          groupName: groupName,
-          groupDate: groupDate,
-          groupFirstImg: document.imagePath,
-        );
-      } catch (e) {
-        // Group might already exist, that's okay - just update it
-        print('Group might already exist, continuing...');
-      }
+      // ========== STEP 2: Save ALL selected files (including first) to DocumentDetail ==========
+      // IMPORTANT: Even for single files, we save to DocumentDetail table
+      developer.log('--- STEP 2: Saving all selected files to DocumentDetail ---');
+      developer.log('Note: Single files will also be saved to DocumentDetail table');
+      int successCount = 0;
+      final baseTimestamp = DateTime.now();
 
-      // Create group table if it doesn't exist
-      try {
-        await _dbHelper.createDocTable(groupName);
-      } catch (e) {
-        print('Table creation note: $e');
-      }
-
-      // Add first file to group table for backward compatibility
-      try {
-        await _dbHelper.addGroupDoc(
-          groupName: groupName,
-          imgPath: document.imagePath,
-          imgName: _getFileNameWithoutExtension(_getFileName(firstFile)),
-          imgNote: '',
-        );
-      } catch (e) {
-        print('Error adding first file to group table: $e');
-      }
-
-      // ========== STEP 3: Save remaining files as DocumentDetails ==========
-      int successCount = 1; // First file already saved
-      
-      for (int i = 1; i < selectedFiles.length; i++) {
+      // Process all selected files (including the first one)
+      // This ensures single files are also saved to DocumentDetail
+      for (int i = 0; i < selectedFiles.length; i++) {
         try {
-          final fileItem = _fileItems[selectedFiles[i]];
+          final selectedIndex = selectedFiles[i];
+          if (selectedIndex >= _fileItems.length) {
+            developer.log('⚠ Selected index $selectedIndex is out of bounds, skipping');
+            continue;
+          }
+
+          final fileItem = _fileItems[selectedIndex];
           final file = fileItem.file;
           final fileName = _getFileName(file);
           final isPDF = file.path.toLowerCase().endsWith('.pdf');
+          developer.log('Processing file ${i + 1}/${selectedFiles.length}: $fileName, isPDF: $isPDF');
 
           String savedFilePath;
           String? savedThumbnailPath;
 
-          // Save file to appropriate directory
-          if (isPDF) {
-            final pdfBytes = await file.readAsBytes();
-            final pdfDir = await _fileStorageService.getPDFDirectory();
-            final timestamp = DateTime.now().millisecondsSinceEpoch;
-            final fileExtension = fileName.contains('.') 
-                ? fileName.substring(fileName.lastIndexOf('.')) 
-                : '.pdf';
-            savedFilePath = '${pdfDir.path}/pdf_${timestamp}_$i$fileExtension';
-            final savedFile = File(savedFilePath);
-            await savedFile.writeAsBytes(pdfBytes);
-            
-            // Generate thumbnail
-            try {
-              final thumbnailBytes = await _fileStorageService.generatePDFThumbnail(pdfBytes);
-              if (thumbnailBytes != null) {
-                savedThumbnailPath = '${pdfDir.path}/thumb_${timestamp}_$i.jpg';
-                final thumbFile = File(savedThumbnailPath);
-                await thumbFile.writeAsBytes(thumbnailBytes);
-              }
-            } catch (e) {
-              print('Error generating PDF thumbnail: $e');
-            }
+          // For the first file, use the paths from the Document table
+          if (i == 0) {
+            savedFilePath = document['Image_path']?.toString() ?? '';
+            savedThumbnailPath = document['image_thumbnail']?.toString();
+            developer.log('  ✓ Using paths from Document table');
           } else {
-            final imageBytes = await file.readAsBytes();
-            final imagesDir = await _fileStorageService.getImagesDirectory();
-            final timestamp = DateTime.now().millisecondsSinceEpoch;
-            final fileExtension = fileName.contains('.') 
-                ? fileName.substring(fileName.lastIndexOf('.')) 
-                : '.jpg';
-            savedFilePath = '${imagesDir.path}/img_${timestamp}_$i$fileExtension';
-            final savedFile = File(savedFilePath);
-            await savedFile.writeAsBytes(imageBytes);
-            
-            // Generate thumbnail
-            try {
-              final thumbnailBytes = await _fileStorageService.generateImageThumbnail(imageBytes);
-              if (thumbnailBytes != null) {
-                savedThumbnailPath = '${imagesDir.path}/thumb_${timestamp}_$i.jpg';
-                final thumbFile = File(savedThumbnailPath);
-                await thumbFile.writeAsBytes(thumbnailBytes);
+            // For other files, save them to appropriate directories
+            final fileTimestamp = baseTimestamp.add(Duration(milliseconds: i));
+            final timestamp = fileTimestamp.millisecondsSinceEpoch;
+
+            if (isPDF) {
+              final pdfBytes = await file.readAsBytes();
+              final pdfDir = await _fileStorageService.getPDFDirectory();
+              final fileExtension = fileName.contains('.')
+                  ? fileName.substring(fileName.lastIndexOf('.'))
+                  : '.pdf';
+              savedFilePath = '${pdfDir.path}/pdf_${timestamp}_$i$fileExtension';
+              final savedFile = File(savedFilePath);
+              await savedFile.writeAsBytes(pdfBytes);
+              developer.log('  ✓ PDF file saved to: $savedFilePath');
+
+              // Generate thumbnail
+              try {
+                final thumbnailBytes = await _fileStorageService.generatePDFThumbnail(pdfBytes);
+                if (thumbnailBytes != null) {
+                  savedThumbnailPath = '${pdfDir.path}/thumb_${timestamp}_$i.jpg';
+                  final thumbFile = File(savedThumbnailPath);
+                  await thumbFile.writeAsBytes(thumbnailBytes);
+                  developer.log('  ✓ PDF thumbnail generated');
+                }
+              } catch (e) {
+                developer.log('  ✗ Error generating PDF thumbnail: $e');
               }
-            } catch (e) {
-              print('Error generating image thumbnail: $e');
+            } else {
+              final imageBytes = await file.readAsBytes();
+              final imagesDir = await _fileStorageService.getImagesDirectory();
+              final fileExtension = fileName.contains('.')
+                  ? fileName.substring(fileName.lastIndexOf('.'))
+                  : '.jpg';
+              savedFilePath = '${imagesDir.path}/img_${timestamp}_$i$fileExtension';
+              final savedFile = File(savedFilePath);
+              await savedFile.writeAsBytes(imageBytes);
+              developer.log('  ✓ Image file saved to: $savedFilePath');
+
+              // Generate thumbnail
+              try {
+                final thumbnailBytes = await _fileStorageService.generateImageThumbnail(imageBytes);
+                if (thumbnailBytes != null) {
+                  savedThumbnailPath = '${imagesDir.path}/thumb_${timestamp}_$i.jpg';
+                  final thumbFile = File(savedThumbnailPath);
+                  await thumbFile.writeAsBytes(thumbnailBytes);
+                  developer.log('  ✓ Image thumbnail generated');
+                }
+              } catch (e) {
+                developer.log('  ✗ Error generating image thumbnail: $e');
+              }
             }
           }
 
-          // Create DocumentDetail entry
-          final documentDetail = DocumentDetail(
-            documentId: documentId,
-            title: _getFileNameWithoutExtension(fileName),
-            type: isPDF ? 'pdf' : 'image',
-            imagePath: savedFilePath,
-            thumbnailPath: savedThumbnailPath,
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          );
+          // Create DocumentDetail entry with document_id pointing to the first document
+          // IMPORTANT: This runs for ALL files, including single files (when i == 0)
+          // Single images/files will also be stored in DocumentDetail table
+          final fileTimestamp = baseTimestamp.add(Duration(milliseconds: i));
+          final documentDetailMap = {
+            'document_id': documentId,
+            'title': '${_getFileNameWithoutExtension(fileName)}_$i',
+            'type': isPDF ? 'pdf' : 'image',
+            'Image_path': savedFilePath,
+            'image_thumbnail': savedThumbnailPath,
+            'created_date': fileTimestamp.toIso8601String(),
+            'updated_date': fileTimestamp.toIso8601String(),
+            'favourite': 0,
+            'is_deleted': 0,
+          };
 
-          await _dbHelper.createDocumentDetail(documentDetail);
-          successCount++;
-
-          // Also add to group table for backward compatibility
-          try {
-            await _dbHelper.addGroupDoc(
-              groupName: groupName,
-              imgPath: savedFilePath,
-              imgName: _getFileNameWithoutExtension(fileName),
-              imgNote: '',
-            );
-          } catch (e) {
-            print('Error adding file to group table: $e');
+          final detailId = await _dbHelper.createDocumentDetail(documentDetailMap);
+          developer.log('  ✓ DocumentDetail entry created (ID: $detailId, document_id: $documentId)');
+          if (selectedFiles.length == 1) {
+            developer.log('  ✓ Single file saved to DocumentDetail table');
           }
+          successCount++;
         } catch (e) {
-          print('Error saving file ${i + 1}: $e');
+          developer.log('✗ Error saving file ${i + 1}: $e');
           // Continue with next file even if one fails
         }
       }
 
+      // Final summary log
+      developer.log('=== SAVE FILES COMPLETE ===');
+      developer.log('Summary:');
+      developer.log('  - Total SELECTED files: ${selectedFiles.length}');
+      developer.log('  - Successfully saved: $successCount');
+      developer.log('  - Document table entries: 1');
+      developer.log('  - DocumentDetail table entries: $successCount');
+      developer.log('===========================');
+
       // Refresh home provider to show new document
       if (mounted) {
-        final provider = Provider.of<HomeProvider>(context, listen: false);
-        provider.loadDocuments();
+        try {
+          final provider = Provider.of<HomeProvider>(context, listen: false);
+          developer.log('Refreshing documents list after save...');
+          await Future.delayed(const Duration(milliseconds: 500));
+          await provider.loadDocuments();
+          developer.log('✓ Documents list refreshed');
+        } catch (e) {
+          developer.log('✗ Error refreshing documents after save: $e');
+        }
       }
 
       if (mounted) {
@@ -366,7 +433,9 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
         final colorScheme = Theme.of(context).colorScheme;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('$successCount of ${selectedFiles.length} file(s) saved successfully'),
+            content: Text(
+              '$successCount of ${selectedFiles.length} file(s) saved successfully',
+            ),
             backgroundColor: colorScheme.primary,
             duration: const Duration(seconds: 3),
           ),
@@ -387,7 +456,7 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
           ),
         );
       }
-      print('Error in _saveFiles: $e');
+      developer.log('Error in _saveFiles: $e');
     }
   }
 
@@ -425,10 +494,7 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: Icon(
-            Icons.arrow_back_rounded,
-            color: colorScheme.onSurface,
-          ),
+          icon: Icon(Icons.arrow_back_rounded, color: colorScheme.onSurface),
           onPressed: () => NavigationService.goBack(),
         ),
         title: Text(
@@ -441,17 +507,11 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
         ),
         actions: [
           IconButton(
-            icon: Icon(
-              Icons.add_rounded,
-              color: colorScheme.onSurface,
-            ),
+            icon: Icon(Icons.add_rounded, color: colorScheme.onSurface),
             onPressed: _addMoreFiles,
           ),
           IconButton(
-            icon: Icon(
-              Icons.save_rounded,
-              color: colorScheme.onSurface,
-            ),
+            icon: Icon(Icons.save_rounded, color: colorScheme.onSurface),
             onPressed: _isSaving ? null : _saveFiles,
           ),
         ],
@@ -549,7 +609,9 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
                                 child: Center(
                                   child: Icon(
                                     Icons.description_rounded,
-                                    color: colorScheme.onSurface.withOpacity(0.3),
+                                    color: colorScheme.onSurface.withOpacity(
+                                      0.3,
+                                    ),
                                     size: 48,
                                   ),
                                 ),
@@ -574,8 +636,8 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
                     top: 8,
                     left: 8,
                     child: Container(
-                      width: 28,
-                      height: 28,
+                      width: 18,
+                      height: 18,
                       decoration: const BoxDecoration(
                         color: Colors.green,
                         shape: BoxShape.circle,
@@ -583,7 +645,7 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
                       child: const Icon(
                         Icons.check_rounded,
                         color: Colors.white,
-                        size: 18,
+                        size: 12,
                       ),
                     ),
                   ),
@@ -592,7 +654,10 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
                   top: 8,
                   right: 8,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.grey.withOpacity(0.75),
                       borderRadius: BorderRadius.circular(12),
@@ -601,7 +666,7 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
                       '$pageCount ${pageCount == 1 ? 'Page' : 'Pages'}',
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 11,
+                        fontSize: 10,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -614,8 +679,8 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
                   child: GestureDetector(
                     onTap: () => _removeFile(index),
                     child: Container(
-                      width: 32,
-                      height: 32,
+                      width: 25,
+                      height: 25,
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.95),
                         shape: BoxShape.circle,
@@ -630,7 +695,7 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
                       child: Icon(
                         Icons.delete_outline_rounded,
                         color: colorScheme.error,
-                        size: 18,
+                        size: 14,
                       ),
                     ),
                   ),
@@ -671,7 +736,6 @@ class _ArrangeFilesScreenState extends State<ArrangeFilesScreen> {
       ),
     );
   }
-
 }
 
 class FileItem {
@@ -679,17 +743,9 @@ class FileItem {
   final int orderIndex;
   final int? pageCount;
 
-  FileItem({
-    required this.file,
-    required this.orderIndex,
-    this.pageCount,
-  });
+  FileItem({required this.file, required this.orderIndex, this.pageCount});
 
-  FileItem copyWith({
-    File? file,
-    int? orderIndex,
-    int? pageCount,
-  }) {
+  FileItem copyWith({File? file, int? orderIndex, int? pageCount}) {
     return FileItem(
       file: file ?? this.file,
       orderIndex: orderIndex ?? this.orderIndex,
@@ -697,4 +753,3 @@ class FileItem {
     );
   }
 }
-

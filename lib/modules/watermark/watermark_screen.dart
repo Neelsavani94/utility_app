@@ -11,11 +11,11 @@ import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:image/image.dart' as img;
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:provider/provider.dart';
+import 'package:printing/printing.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Services/file_storage_service.dart';
 import '../../Services/database_helper.dart';
 import '../../Providers/home_provider.dart';
-import '../../Models/document_model.dart';
 
 class WatermarkScreen extends StatefulWidget {
   final String? initialFilePath;
@@ -1302,195 +1302,241 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       });
 
       // Check file type and apply watermark accordingly
-      Uint8List? outputBytes;
-      String fileType = 'image';
+      final fileStorageService = FileStorageService.instance;
+      final dbHelper = DatabaseHelper.instance;
       
       if (['jpg', 'jpeg', 'png', 'bmp', 'webp'].contains(extension)) {
-        log('Processing as image file');
-        outputBytes = await _watermarkImage(inputPath, watermarkText);
-        fileType = 'image';
-      } else if (extension == 'pdf') {
-        log('Processing as PDF file');
-        outputBytes = await _watermarkPDF(inputPath, watermarkText);
-        fileType = 'pdf';
-      } else if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(extension)) {
-        throw Exception('Video watermarking is not supported');
-      } else {
-        throw Exception('Unsupported file type: $extension');
-      }
-
+        log('Processing as single image file');
         setState(() {
-        _progress = 0.8;
-      });
-
-      // Validate output
-      if (outputBytes == null || outputBytes.isEmpty) {
-        throw Exception(
-          'Failed to generate watermarked file - output is empty',
+          _progress = 0.3;
+        });
+        
+        // Apply watermark to image
+        final outputBytes = await _watermarkImage(inputPath, watermarkText);
+        
+        if (outputBytes == null || outputBytes.isEmpty) {
+          throw Exception('Failed to generate watermarked image');
+        }
+        
+        setState(() {
+          _progress = 0.6;
+        });
+        
+        // Save single image to Document table
+        final fileName = inputPath.split('/').last;
+        final docId = await fileStorageService.saveImageFile(
+          imageBytes: outputBytes,
+          fileName: fileName,
+          title: fileName.split('.').first,
         );
-      }
-
-      log('Watermark applied successfully, updating existing document...');
-
-      setState(() {
-        _progress = 0.9;
-      });
-
-      try {
-        // Find the existing document by the initial file path
-        Document? existingDocument;
-        if (widget.initialFilePath != null) {
-          // Try to find document by image path
-          final allDocuments = await DatabaseHelper.instance.getAllDocuments();
-          final initialPath = widget.initialFilePath!;
-          final initialFileName = initialPath.split('/').last;
-
-          // First try exact match
+        
+        if (docId == null) {
+          throw Exception('Failed to save watermarked image to database');
+        }
+        
+        log('✓ Single image saved to Document table (ID: $docId)');
+        
+        // IMPORTANT: Also save single images to DocumentDetail table
+        final document = await dbHelper.getDocument(docId);
+        if (document != null) {
           try {
-            existingDocument = allDocuments.firstWhere(
-              (doc) => doc.imagePath == initialPath,
-            );
+            final timestamp = DateTime.now();
+            final fileNameWithoutExt = fileName.contains('.')
+                ? fileName.substring(0, fileName.lastIndexOf('.'))
+                : fileName;
+            
+            final documentDetailMap = {
+              'document_id': docId,
+              'title': '${fileNameWithoutExt}_0',
+              'type': 'image',
+              'Image_path': document['Image_path']?.toString() ?? '',
+              'image_thumbnail': document['image_thumbnail']?.toString() ?? '',
+              'created_date': timestamp.toIso8601String(),
+              'updated_date': timestamp.toIso8601String(),
+              'favourite': 0,
+              'is_deleted': 0,
+            };
+            
+            final detailId = await dbHelper.createDocumentDetail(documentDetailMap);
+            log('✓ Single watermarked image saved to DocumentDetail table (ID: $detailId, document_id: $docId)');
           } catch (e) {
-            log('Exact path match not found, trying filename match...');
-            // If not found, try by filename
-            try {
-              existingDocument = allDocuments.firstWhere((doc) {
-                final docFileName = doc.imagePath.split('/').last;
-                return docFileName == initialFileName ||
-                    doc.imagePath.endsWith(initialFileName) ||
-                    initialPath.endsWith(docFileName);
-              });
-            } catch (e2) {
-              log('Could not find document by filename: $e2');
-            }
+            log('✗ Error saving to DocumentDetail table: $e');
+            // Continue even if DocumentDetail save fails
           }
         }
-
-        if (existingDocument == null || existingDocument.id == null) {
-          throw Exception(
-            'Could not find existing document to update. Please ensure the file was imported from the app.',
-          );
-        }
-
-        log(
-          'Found existing document with ID: ${existingDocument.id}, Title: ${existingDocument.title}',
-        );
-
-        // Save watermarked file to the same location or generate new path
-      final fileStorageService = FileStorageService.instance;
-        String newFilePath;
-        String? newThumbnailPath;
-      
-      if (fileType == 'image') {
-          // Save image file
-          final imagesDir = await fileStorageService.getImagesDirectory();
-          final timestamp = DateTime.now().millisecondsSinceEpoch;
-          final fileName = 'img_$timestamp.$extension';
-          newFilePath = '${imagesDir.path}/$fileName';
-
-          // Write the watermarked image
-          final file = File(newFilePath);
-          await file.writeAsBytes(outputBytes);
-
-          // Generate new thumbnail
-          final thumbnailBytes = await fileStorageService
-              .generateImageThumbnail(outputBytes);
-          if (thumbnailBytes != null) {
-            final thumbPath = '${imagesDir.path}/thumb_$timestamp.jpg';
-            final thumbFile = File(thumbPath);
-            await thumbFile.writeAsBytes(thumbnailBytes);
-            newThumbnailPath = thumbPath;
-          }
-      } else if (fileType == 'pdf') {
-          // Save PDF file
-          final pdfDir = await fileStorageService.getPDFDirectory();
-          final timestamp = DateTime.now().millisecondsSinceEpoch;
-          final fileName = 'pdf_$timestamp.$extension';
-          newFilePath = '${pdfDir.path}/$fileName';
-
-          // Write the watermarked PDF
-          final file = File(newFilePath);
-          await file.writeAsBytes(outputBytes);
-        } else {
-          throw Exception('Unsupported file type: $fileType');
-        }
-
-        log('Watermarked file saved to: $newFilePath');
-
-        // Update the existing document with new path, keeping all other fields the same
-        final updatedDocument = Document(
-          id: existingDocument.id,
-          title: existingDocument.title, // Keep original title
-          type: existingDocument.type, // Keep original type
-          isFavourite: existingDocument.isFavourite, // Keep favourite status
-          imagePath: newFilePath, // Update only the path
-          thumbnailPath:
-              newThumbnailPath ??
-              existingDocument.thumbnailPath, // Update thumbnail if available
-          createdAt: existingDocument.createdAt, // Keep original creation date
-          updatedAt: DateTime.now(), // Update the updated_at timestamp
-          tagId: existingDocument.tagId, // Keep original tag
-          isDeleted: existingDocument.isDeleted, // Keep deletion status
-          deletedAt: existingDocument.deletedAt, // Keep deletion date if any
-        );
-
-        // Update document in database directly in Documents table
-        final dbHelper = DatabaseHelper.instance;
-        final db = await dbHelper.database;
-        final updateMap = updatedDocument.toMap();
-        // Remove id from update map as it's the primary key
-        updateMap.remove('id');
-
-        try {
-          final updateCount = await db.update(
-            'Documents',
-            updateMap,
-            where: 'id = ?',
-            whereArgs: [existingDocument.id],
-          );
-
-          if (updateCount == 0) {
-            log(
-              'Warning: Document update returned 0 rows updated, trying fallback method',
-            );
-            // Try using the updateDocument method as fallback (for old group structure)
-            await dbHelper.updateDocument(updatedDocument);
-          } else {
-            log('Document updated successfully: $updateCount row(s) updated');
-          }
-        } catch (e) {
-          log('Error updating document in Documents table: $e');
-          // Fallback to updateDocument method
-          await dbHelper.updateDocument(updatedDocument);
-        }
-
-        log('Document updated successfully with new path: $newFilePath');
+        
+        setState(() {
+          _progress = 1.0;
+          _isProcessing = false;
+        });
         
         // Refresh home screen documents
         if (mounted) {
           final provider = Provider.of<HomeProvider>(context, listen: false);
-          provider.loadDocuments();
-      }
-
-      setState(() {
-        _progress = 1.0;
-        _isProcessing = false;
-          _outputPath = newFilePath;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+          await provider.loadDocuments();
+          
+          ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-            content: Text('Watermark applied successfully!'),
-            backgroundColor: Colors.green,
+              content: Text('Watermark applied successfully!'),
+              backgroundColor: Colors.green,
               duration: Duration(seconds: 2),
             ),
           );
           Get.back();
         }
-      } catch (saveError) {
-        log('Error saving to database: $saveError');
-        throw Exception('Failed to save watermarked file: $saveError');
+        
+      } else if (extension == 'pdf') {
+        log('Processing as PDF file - converting pages to images');
+        setState(() {
+          _progress = 0.2;
+        });
+        
+        // Apply watermark to PDF
+        final watermarkedPdfBytes = await _watermarkPDF(inputPath, watermarkText);
+        
+        if (watermarkedPdfBytes == null || watermarkedPdfBytes.isEmpty) {
+          throw Exception('Failed to generate watermarked PDF');
+        }
+        
+        setState(() {
+          _progress = 0.4;
+        });
+        
+        // Convert PDF pages to images
+        final imagesDir = await fileStorageService.getImagesDirectory();
+        final baseFileName = inputPath.split('/').last.split('.').first;
+        
+        // Convert PDF to images using Printing.raster
+        final imageStream = Printing.raster(watermarkedPdfBytes, dpi: 300);
+        final List<Uint8List> pageImages = [];
+        
+        int pageIndex = 0;
+        await for (final imageRaster in imageStream) {
+          try {
+            final imageBytes = await imageRaster.toPng();
+            if (imageBytes.isNotEmpty) {
+              pageImages.add(imageBytes);
+              log('✓ Converted page ${pageIndex + 1} to image');
+            }
+          } catch (e) {
+            log('✗ Error converting page ${pageIndex + 1} to image: $e');
+          }
+          pageIndex++;
+        }
+        
+        if (pageImages.isEmpty) {
+          throw Exception('Failed to convert PDF pages to images');
+        }
+        
+        log('✓ Converted ${pageImages.length} PDF pages to images');
+        
+        setState(() {
+          _progress = 0.6;
+        });
+        
+        // Save first image to Document table
+        final firstImageBytes = pageImages[0];
+        final firstFileName = '${baseFileName}_0.png';
+        final documentId = await fileStorageService.saveImageFile(
+          imageBytes: firstImageBytes,
+          fileName: firstFileName,
+          title: baseFileName,
+        );
+        
+        if (documentId == null) {
+          throw Exception('Failed to save first image to Document table');
+        }
+        
+        log('✓ First image saved to Document table (ID: $documentId)');
+        
+        setState(() {
+          _progress = 0.7;
+        });
+        
+        // Save all images (including first) to DocumentDetail table
+        int successCount = 0;
+        final baseTimestamp = DateTime.now();
+        
+        for (int i = 0; i < pageImages.length; i++) {
+          try {
+            // For first image, get paths from Document table
+            String savedFilePath;
+            String? savedThumbnailPath;
+            
+            if (i == 0) {
+              final document = await dbHelper.getDocument(documentId);
+              if (document != null) {
+                savedFilePath = document['Image_path']?.toString() ?? '';
+                savedThumbnailPath = document['image_thumbnail']?.toString();
+              } else {
+                throw Exception('Document not found after creation');
+              }
+            } else {
+              // Save other images
+              final fileTimestamp = baseTimestamp.add(Duration(milliseconds: i));
+              final fileTimestampMs = fileTimestamp.millisecondsSinceEpoch;
+              savedFilePath = '${imagesDir.path}/img_${fileTimestampMs}_$i.png';
+              
+              final file = File(savedFilePath);
+              await file.writeAsBytes(pageImages[i]);
+              
+              // Generate thumbnail
+              final thumbnailBytes = await fileStorageService.generateImageThumbnail(pageImages[i]);
+              if (thumbnailBytes != null) {
+                savedThumbnailPath = '${imagesDir.path}/thumb_${fileTimestampMs}_$i.jpg';
+                final thumbFile = File(savedThumbnailPath);
+                await thumbFile.writeAsBytes(thumbnailBytes);
+              }
+            }
+            
+            // Create DocumentDetail entry
+            final fileTimestamp = baseTimestamp.add(Duration(milliseconds: i));
+            final documentDetailMap = {
+              'document_id': documentId,
+              'title': '${baseFileName}_$i',
+              'type': 'image',
+              'Image_path': savedFilePath,
+              'image_thumbnail': savedThumbnailPath,
+              'created_date': fileTimestamp.toIso8601String(),
+              'updated_date': fileTimestamp.toIso8601String(),
+              'favourite': 0,
+              'is_deleted': 0,
+            };
+            
+            await dbHelper.createDocumentDetail(documentDetailMap);
+            successCount++;
+            log('✓ Page ${i + 1} saved to DocumentDetail table');
+          } catch (e) {
+            log('✗ Error saving page ${i + 1} to DocumentDetail: $e');
+          }
+        }
+        
+        log('✓ Saved $successCount/${pageImages.length} pages to DocumentDetail table');
+        
+        setState(() {
+          _progress = 1.0;
+          _isProcessing = false;
+        });
+        
+        // Refresh home screen documents
+        if (mounted) {
+          final provider = Provider.of<HomeProvider>(context, listen: false);
+          await provider.loadDocuments();
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Watermark applied to ${pageImages.length} page(s)!'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          Get.back();
+        }
+        
+      } else if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(extension)) {
+        throw Exception('Video watermarking is not supported');
+      } else {
+        throw Exception('Unsupported file type: $extension');
       }
     } catch (e, stackTrace) {
       log('Error in _applyWatermark: $e');
@@ -1719,15 +1765,6 @@ class _WatermarkScreenState extends State<WatermarkScreen> {
       'Calculated spacing: $spacing (textSize: $textSize) for ${positions.length} positions',
     );
     return positions;
-  }
-
-  Future<void> _watermarkVideo(
-    String inputPath,
-    String outputPath,
-    String text,
-  ) async {
-    // Video watermarking not supported
-    throw Exception('Video watermarking is not supported');
   }
 
   Future<Uint8List?> _watermarkPDF(String inputPath, String text) async {

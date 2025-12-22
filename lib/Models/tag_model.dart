@@ -1,27 +1,27 @@
 class Tag {
   final int? id;
   final String title;
-  final DateTime createdAt;
-  final DateTime updatedAt;
+  final DateTime createdDate;
+  final DateTime updatedDate;
   final bool isDefault; // Indicates if this is a default tag
 
   Tag({
     this.id,
     required this.title,
-    DateTime? createdAt,
-    DateTime? updatedAt,
+    DateTime? createdDate,
+    DateTime? updatedDate,
     this.isDefault = false,
-  })  : createdAt = createdAt ?? DateTime.now(),
-        updatedAt = updatedAt ?? DateTime.now();
+  })  : createdDate = createdDate ?? DateTime.now(),
+        updatedDate = updatedDate ?? DateTime.now();
 
   // Convert Tag to Map for database
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'title': title,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-      'is_default': isDefault ? 1 : 0,
+      'created_date': createdDate.toIso8601String(),
+      'updated_date': updatedDate.toIso8601String(),
+      'default_tag': isDefault ? 1 : 0,
     };
   }
 
@@ -30,13 +30,13 @@ class Tag {
     return Tag(
       id: map['id'] as int?,
       title: map['title'] as String,
-      createdAt: map['created_at'] != null
-          ? DateTime.parse(map['created_at'] as String)
+      createdDate: map['created_date'] != null
+          ? DateTime.parse(map['created_date'] as String)
           : DateTime.now(),
-      updatedAt: map['updated_at'] != null
-          ? DateTime.parse(map['updated_at'] as String)
+      updatedDate: map['updated_date'] != null
+          ? DateTime.parse(map['updated_date'] as String)
           : DateTime.now(),
-      isDefault: (map['is_default'] as int? ?? 0) == 1,
+      isDefault: (map['default_tag'] as int? ?? 0) == 1,
     );
   }
 
@@ -44,22 +44,22 @@ class Tag {
   Tag copyWith({
     int? id,
     String? title,
-    DateTime? createdAt,
-    DateTime? updatedAt,
+    DateTime? createdDate,
+    DateTime? updatedDate,
     bool? isDefault,
   }) {
     return Tag(
       id: id ?? this.id,
       title: title ?? this.title,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
+      createdDate: createdDate ?? this.createdDate,
+      updatedDate: updatedDate ?? this.updatedDate,
       isDefault: isDefault ?? this.isDefault,
     );
   }
 
   @override
   String toString() {
-    return 'Tag{id: $id, title: $title, createdAt: $createdAt, updatedAt: $updatedAt}';
+    return 'Tag{id: $id, title: $title, createdDate: $createdDate, updatedDate: $updatedDate, isDefault: $isDefault}';
   }
 }
 

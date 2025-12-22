@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Services/file_storage_service.dart';
@@ -29,7 +28,7 @@ class ScanPDFProgressScreen extends StatefulWidget {
 class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
     with TickerProviderStateMixin {
   double _progress = 0.0;
-  String? _pdfPath;
+  String? _savedPath;
   late AnimationController _percentageController;
   late AnimationController _waveController;
   late Animation<double> _percentageAnimation;
@@ -77,19 +76,22 @@ class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
 
   Future<void> _convertToPDF() async {
     try {
-      final pdfDocument = PdfDocument();
       final totalImages = widget.imageFiles.length;
+      final fileStorageService = FileStorageService.instance;
+      final dbHelper = DatabaseHelper.instance;
       
-      // Total steps: image processing + PDF saving
-      // Each image is 1 step, PDF saving is 1 step
-      final totalSteps = totalImages + 1;
+      // Total steps: image processing + saving
+      final totalSteps = totalImages;
       int currentStep = 0;
+      
+      // Store all image bytes
+      final List<Uint8List> imageBytesList = [];
 
       // Process each image
       for (int i = 0; i < totalImages; i++) {
         currentStep++;
         
-        // Update progress (images processing: 0% to 90%)
+        // Update progress
         setState(() {
           _progress = currentStep / totalSteps;
         });
@@ -119,80 +121,21 @@ class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
           // Fallback to original image if filtered version not available
           imageBytes = await widget.imageFiles[i].readAsBytes();
         }
-
-        // Add page to PDF
-        final page = pdfDocument.pages.add();
-        final pageSize = page.size;
-
-        // Add image to page - fit to page size
-        final image = PdfBitmap(imageBytes);
-        final imageWidth = image.width.toDouble();
-        final imageHeight = image.height.toDouble();
         
-        // Calculate aspect ratio and fit image to page
-        final pageAspect = pageSize.width / pageSize.height;
-        final imageAspect = imageWidth / imageHeight;
-        
-        double drawWidth, drawHeight, drawX, drawY;
-        
-        if (imageAspect > pageAspect) {
-          // Image is wider - fit to width
-          drawWidth = pageSize.width;
-          drawHeight = pageSize.width / imageAspect;
-          drawX = 0;
-          drawY = (pageSize.height - drawHeight) / 2;
-        } else {
-          // Image is taller - fit to height
-          drawHeight = pageSize.height;
-          drawWidth = pageSize.height * imageAspect;
-          drawX = (pageSize.width - drawWidth) / 2;
-          drawY = 0;
-        }
-        
-        page.graphics.drawImage(
-          image,
-          Rect.fromLTWH(
-            drawX,
-            drawY,
-            drawWidth,
-            drawHeight,
-          ),
-        );
+        imageBytesList.add(imageBytes);
 
         // Small delay for smooth animation
         await Future.delayed(const Duration(milliseconds: 50));
       }
 
-      // Update progress for PDF saving (90% to 95%)
-      currentStep++;
+      // Save images to database
       setState(() {
-        _progress = currentStep / totalSteps;
+        _progress = 0.9;
       });
       
       _percentageAnimation = Tween<double>(
         begin: _percentageAnimation.value,
-        end: (_progress * 100),
-      ).animate(
-        CurvedAnimation(
-          parent: _percentageController,
-          curve: Curves.easeOut,
-        ),
-      );
-      _percentageController.forward(from: 0);
-
-      // Generate PDF bytes
-      final pdfBytesList = await pdfDocument.save();
-      pdfDocument.dispose();
-      final pdfBytes = Uint8List.fromList(pdfBytesList);
-      
-      // Update progress for writing file (95% to 99%)
-      setState(() {
-        _progress = 0.99;
-      });
-      
-      _percentageAnimation = Tween<double>(
-        begin: _percentageAnimation.value,
-        end: 99,
+        end: 90,
       ).animate(
         CurvedAnimation(
           parent: _percentageController,
@@ -201,31 +144,102 @@ class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
       );
       _percentageController.forward(from: 0);
       
-      // Save PDF using file storage service
-      final fileStorageService = FileStorageService.instance;
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final docId = await fileStorageService.savePDFFile(
-        pdfBytes: pdfBytes,
-        fileName: 'Doc_Scan_PDF_$timestamp.pdf',
-        title: 'Doc_Scan_PDF',
-      );
+      String? savedPath;
       
-      // Get the saved file path from database
-      String? pdfPath;
-      if (docId != null) {
-        final document = await DatabaseHelper.instance.getDocumentById(docId);
-        pdfPath = document?.imagePath;
+      if (totalImages == 1) {
+        // Single image: Save to Document table only
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final docId = await fileStorageService.saveImageFile(
+          imageBytes: imageBytesList[0],
+          fileName: 'Doc_Scan_$timestamp.jpg',
+          title: 'Doc_Scan',
+        );
         
-        // Refresh home screen documents
-        if (mounted) {
-          final provider = Provider.of<HomeProvider>(context, listen: false);
-          provider.loadDocuments();
+        if (docId != null) {
+          final document = await dbHelper.getDocument(docId);
+          savedPath = document?['Image_path']?.toString();
         }
+      } else {
+        // Multiple images: First to Document table, all to DocumentDetail table
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final baseFileName = 'Doc_Scan';
+        
+        // Save first image to Document table
+        final documentId = await fileStorageService.saveImageFile(
+          imageBytes: imageBytesList[0],
+          fileName: '${baseFileName}_0_$timestamp.jpg',
+          title: baseFileName,
+        );
+        
+        if (documentId == null) {
+          throw Exception('Failed to save first image to Document table');
+        }
+        
+        // Get document data for first image paths
+        final document = await dbHelper.getDocument(documentId);
+        if (document == null) {
+          throw Exception('Document not found after creation');
+        }
+        
+        savedPath = document['Image_path']?.toString();
+        
+        // Save all images (including first) to DocumentDetail table
+        final baseTimestamp = DateTime.now();
+        final imagesDir = await fileStorageService.getImagesDirectory();
+        
+        for (int i = 0; i < imageBytesList.length; i++) {
+          String savedFilePath;
+          String? savedThumbnailPath;
+          
+          if (i == 0) {
+            // Use paths from Document table for first image
+            savedFilePath = document['Image_path']?.toString() ?? '';
+            savedThumbnailPath = document['image_thumbnail']?.toString();
+          } else {
+            // Save other images
+            final fileTimestamp = baseTimestamp.add(Duration(milliseconds: i));
+            final fileTimestampMs = fileTimestamp.millisecondsSinceEpoch;
+            savedFilePath = '${imagesDir.path}/img_${fileTimestampMs}_$i.jpg';
+            
+            final file = File(savedFilePath);
+            await file.writeAsBytes(imageBytesList[i]);
+            
+            // Generate thumbnail
+            final thumbnailBytes = await fileStorageService.generateImageThumbnail(imageBytesList[i]);
+            if (thumbnailBytes != null) {
+              savedThumbnailPath = '${imagesDir.path}/thumb_${fileTimestampMs}_$i.jpg';
+              final thumbFile = File(savedThumbnailPath);
+              await thumbFile.writeAsBytes(thumbnailBytes);
+            }
+          }
+          
+          // Create DocumentDetail entry
+          final fileTimestamp = baseTimestamp.add(Duration(milliseconds: i));
+          final documentDetailMap = {
+            'document_id': documentId,
+            'title': '${baseFileName}_$i',
+            'type': 'image',
+            'Image_path': savedFilePath,
+            'image_thumbnail': savedThumbnailPath,
+            'created_date': fileTimestamp.toIso8601String(),
+            'updated_date': fileTimestamp.toIso8601String(),
+            'favourite': 0,
+            'is_deleted': 0,
+          };
+          
+          await dbHelper.createDocumentDetail(documentDetailMap);
+        }
+      }
+      
+      // Refresh home screen documents
+      if (mounted) {
+        final provider = Provider.of<HomeProvider>(context, listen: false);
+        await provider.loadDocuments();
       }
 
       // Final progress update (100%)
       setState(() {
-        _pdfPath = pdfPath ?? '';
+        _savedPath = savedPath ?? '';
         _progress = 1.0;
         _percentageAnimation = Tween<double>(
           begin: _percentageAnimation.value,
@@ -239,7 +253,7 @@ class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
         _percentageController.forward(from: 0);
       });
     } catch (e) {
-      _showError('Error converting to PDF: $e');
+      _showError('Error saving images: $e');
     }
   }
 
@@ -348,13 +362,13 @@ class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
               const SizedBox(height: AppConstants.spacingXL),
 
               // File Path
-              if (_pdfPath != null)
+              if (_savedPath != null)
                 Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppConstants.spacingL,
                   ),
                   child: Text(
-                    _pdfPath!,
+                    _savedPath!,
                     style: TextStyle(
                       color: colorScheme.onSurface.withOpacity(0.7),
                       fontSize: 12,
@@ -376,13 +390,16 @@ class _ScanPDFProgressScreenState extends State<ScanPDFProgressScreen>
               const Spacer(),
 
               // Open File Button
-              if (_pdfPath != null)
+              if (_savedPath != null)
                 SizedBox(
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
                     onPressed: () {
-                      NavigationService.toScanPDFViewer(pdfPath: _pdfPath!);
+                      NavigationService.toImageViewer(
+                        imagePath: _savedPath!,
+                        imageName: 'Doc_Scan',
+                      );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: colorScheme.primary,

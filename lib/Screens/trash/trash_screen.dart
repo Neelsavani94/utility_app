@@ -33,22 +33,54 @@ class _TrashScreenState extends State<TrashScreen> {
     });
 
     try {
-      // Load deleted documents from database
-      final deletedDocs = await _db.getDeletedDocuments();
-      final tags = await _db.getAllTags();
-      final tagMap = {for (var tag in tags) tag.id: tag.title};
+      // Load deleted documents from TrashDocuments table
+      final trashDocs = await _db.getAllTrashDocuments();
 
-      // Convert to DocumentModel
-      _deletedDocuments = deletedDocs.map((doc) {
-        final category = doc.tagId != null && tagMap.containsKey(doc.tagId)
-            ? tagMap[doc.tagId]!
-            : doc.type;
-        return DocumentModel.fromDocument(
-          doc,
-          category: category,
+      // Convert TrashDocuments to DocumentModel
+      _deletedDocuments = await Future.wait(trashDocs.map((trashDoc) async {
+        // Get the referenced document to get type
+        final documentId = trashDoc['document_id'] as int?;
+        String category = 'document';
+        bool isFavorite = false;
+        
+        if (documentId != null) {
+          final document = await _db.getDocument(documentId);
+          if (document != null) {
+            category = document['type']?.toString() ?? 'document';
+            isFavorite = (document['favourite'] as int? ?? 0) == 1;
+          }
+        }
+        
+        // Determine file type from image path extension if type is not available
+        final imagePath = trashDoc['Image_path']?.toString() ?? '';
+        if (category == 'document' && imagePath.isNotEmpty) {
+          final extension = imagePath.toLowerCase().split('.').last;
+          if (extension == 'pdf') {
+            category = 'pdf';
+          } else if (['jpg', 'jpeg', 'png', 'gif'].contains(extension)) {
+            category = 'image';
+          }
+        }
+        
+        final createdDate = trashDoc['created_date'] != null
+            ? DateTime.tryParse(trashDoc['created_date'].toString())
+            : null;
+        
+        return DocumentModel(
+          id: trashDoc['id']?.toString() ?? '',
+          name: trashDoc['title']?.toString() ?? 'Untitled',
+          createdAt: createdDate ?? DateTime.now(),
           location: 'In this device',
+          category: category,
+          isFavorite: isFavorite,
+          thumbnailPath: trashDoc['image_thumbnail']?.toString(),
+          imagePath: imagePath,
+          isDeleted: true,
+          deletedAt: trashDoc['updated_date'] != null
+              ? DateTime.tryParse(trashDoc['updated_date'].toString())
+              : null,
         );
-      }).toList();
+      }));
 
       setState(() {
         _isLoading = false;
@@ -970,20 +1002,24 @@ class _TrashScreenState extends State<TrashScreen> {
 
   Future<void> _restoreItem(DocumentModel item) async {
     try {
-      // Update database to restore document
-      final docId = int.tryParse(item.id);
-      if (docId != null) {
-        final db = await _db.database;
-        await db.update(
-          'Documents',
-          {
-            'isDeleted': 0,
-            'deleted_at': null,
-            'updated_at': DateTime.now().toIso8601String(),
-          },
-          where: 'id = ?',
-          whereArgs: [docId],
-        );
+      // Get trash document to find document_id
+      final trashId = int.tryParse(item.id);
+      if (trashId != null) {
+        final trashDoc = await _db.getTrashDocument(trashId);
+        if (trashDoc != null) {
+          final documentId = trashDoc['document_id'] as int?;
+          
+          // First: Delete from TrashDocuments table
+          await _db.deleteTrashDocument(trashId);
+          
+          // Then: Update Document table - set is_deleted to false (0)
+          if (documentId != null) {
+            await _db.updateDocument(documentId, {
+              'is_deleted': 0,
+              'updated_date': DateTime.now().toIso8601String(),
+            });
+          }
+        }
       }
 
       // Reload deleted documents
@@ -1000,15 +1036,35 @@ class _TrashScreenState extends State<TrashScreen> {
       }
     } catch (e) {
       print('Error restoring document: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error restoring document: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
     }
   }
 
   Future<void> _deleteItem(DocumentModel item) async {
     try {
-      // Permanently delete from database
-      final docId = int.tryParse(item.id);
-      if (docId != null) {
-        await _db.deleteDocument(docId);
+      // Get trash document to find document_id
+      final trashId = int.tryParse(item.id);
+      if (trashId != null) {
+        final trashDoc = await _db.getTrashDocument(trashId);
+        if (trashDoc != null) {
+          final documentId = trashDoc['document_id'] as int?;
+          
+          // First: Delete from TrashDocuments table
+          await _db.deleteTrashDocument(trashId);
+          
+          // Then: Permanently delete from Document table
+          if (documentId != null) {
+            await _db.deleteDocument(documentId);
+          }
+        }
       }
 
       // Reload deleted documents
@@ -1025,23 +1081,41 @@ class _TrashScreenState extends State<TrashScreen> {
       }
     } catch (e) {
       print('Error deleting document: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error deleting document: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
     }
   }
 
   Future<void> _restoreAllItems() async {
     try {
-      // Restore all deleted documents
-      final db = await _db.database;
-      await db.update(
-        'Documents',
-        {
-          'isDeleted': 0,
-          'deleted_at': null,
-          'updated_at': DateTime.now().toIso8601String(),
-        },
-        where: 'isDeleted = ?',
-        whereArgs: [1],
-      );
+      // Get all trash documents
+      final trashDocs = await _db.getAllTrashDocuments();
+      
+      // Restore each document and remove from trash
+      for (var trashDoc in trashDocs) {
+        final documentId = trashDoc['document_id'] as int?;
+        final trashId = trashDoc['id'] as int?;
+        
+        // First: Delete from TrashDocuments table
+        if (trashId != null) {
+          await _db.deleteTrashDocument(trashId);
+        }
+        
+        // Then: Update Document table - set is_deleted to false (0)
+        if (documentId != null) {
+          await _db.updateDocument(documentId, {
+            'is_deleted': 0,
+            'updated_date': DateTime.now().toIso8601String(),
+          });
+        }
+      }
 
       // Reload deleted documents
       await _loadDeletedDocuments();
@@ -1057,18 +1131,36 @@ class _TrashScreenState extends State<TrashScreen> {
       }
     } catch (e) {
       print('Error restoring all documents: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error restoring all documents: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
     }
   }
 
   Future<void> _deleteAllItems() async {
     try {
-      // Get all deleted document IDs
-      final deletedDocs = await _db.getDeletedDocuments();
+      // Get all trash documents
+      final trashDocs = await _db.getAllTrashDocuments();
 
       // Delete each document permanently
-      for (var doc in deletedDocs) {
-        if (doc.id != null) {
-          await _db.deleteDocument(doc.id!);
+      for (var trashDoc in trashDocs) {
+        final documentId = trashDoc['document_id'] as int?;
+        final trashId = trashDoc['id'] as int?;
+        
+        // First: Delete from TrashDocuments table
+        if (trashId != null) {
+          await _db.deleteTrashDocument(trashId);
+        }
+        
+        // Then: Permanently delete from Document table
+        if (documentId != null) {
+          await _db.deleteDocument(documentId);
         }
       }
 
@@ -1086,6 +1178,15 @@ class _TrashScreenState extends State<TrashScreen> {
       }
     } catch (e) {
       print('Error deleting all documents: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error deleting all documents: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
     }
   }
 }

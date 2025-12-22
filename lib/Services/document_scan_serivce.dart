@@ -10,6 +10,11 @@ class DocumentScanService {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
   /// Scan document and save all images using FileStorageService
+  /// IMPORTANT: Every scan saves to BOTH Document table AND DocumentDetail table
+  /// 
+  /// Logic:
+  /// - Single image: Store data in both Document Table & DocumentDetail Table
+  /// - Multiple images: First image data stored in Document Table, all images stored in DocumentDetail Table
   Future<void> scanAndSaveDocument({
     required DocumentScanningResult result,
   }) async {
@@ -19,60 +24,205 @@ class DocumentScanService {
         return;
       }
 
-      log('Scanned images: ${result.images.toString()}');
-
-      // Use FileStorageService to save images and create database entries
       final fileStorageService = FileStorageService.instance;
-      int successCount = 0;
+      final imagesDir = await fileStorageService.getImagesDirectory();
+      final baseTimestamp = DateTime.now();
+      int? documentId;
+      String? baseTitle;
 
-      for (int i = 0; i < result.images.length; i++) {
-        try {
-          final imagePath = result.images[i];
-          final imageFile = File(imagePath);
+      // Check if single or multiple images
+      final isSingleImage = result.images.length == 1;
 
-          if (!await imageFile.exists()) {
-            log('Image file does not exist: $imagePath');
-            continue;
-          }
+      if (isSingleImage) {
+        // Single image: Store in both Document and DocumentDetail tables
+        final imagePath = result.images[0];
+        final imageFile = File(imagePath);
 
-          // Read image bytes
-          final imageBytes = await imageFile.readAsBytes();
-          
-          // Generate filename
-          final timestamp = DateTime.now().millisecondsSinceEpoch;
-          final fileName = 'scanned_${timestamp}_$i.jpg';
-          final title = 'Scanned Document ${i + 1}';
+        if (!await imageFile.exists()) {
+          log('Image file does not exist: $imagePath');
+          throw Exception('Image file does not exist');
+        }
 
-          // Save using FileStorageService
-          final docId = await fileStorageService.saveImageFile(
-            imageBytes: imageBytes,
-            fileName: fileName,
-            title: title,
-          );
+        // Read image bytes
+        final imageBytes = await imageFile.readAsBytes();
+        
+        // Save image file
+        final fileTimestamp = baseTimestamp;
+        final fileTimestampMs = fileTimestamp.millisecondsSinceEpoch;
+        final savedFilePath = '${imagesDir.path}/img_${fileTimestampMs}.jpg';
+        
+        final file = File(savedFilePath);
+        await file.writeAsBytes(imageBytes);
+        
+        // Generate thumbnail
+        String? savedThumbnailPath;
+        final thumbnailBytes = await fileStorageService.generateImageThumbnail(imageBytes);
+        if (thumbnailBytes != null) {
+          savedThumbnailPath = '${imagesDir.path}/thumb_${fileTimestampMs}.jpg';
+          final thumbFile = File(savedThumbnailPath);
+          await thumbFile.writeAsBytes(thumbnailBytes);
+        }
 
-          if (docId != null) {
+        // Create title
+        baseTitle = 'Scanned Document ${fileTimestampMs}';
+
+        // Save to Document table
+        final documentMap = {
+          'title': baseTitle,
+          'type': 'image',
+          'Image_path': savedFilePath,
+          'image_thumbnail': savedThumbnailPath,
+          'created_date': fileTimestamp.toIso8601String(),
+          'updated_date': fileTimestamp.toIso8601String(),
+          'favourite': 0,
+          'is_deleted': 0,
+        };
+        
+        documentId = await _dbHelper.createDocument(documentMap);
+        log('✓ Saved single image to Document table with ID: $documentId');
+
+        // Save to DocumentDetail table
+        final documentDetailMap = {
+          'document_id': documentId,
+          'title': baseTitle,
+          'type': 'image',
+          'Image_path': savedFilePath,
+          'image_thumbnail': savedThumbnailPath,
+          'created_date': fileTimestamp.toIso8601String(),
+          'updated_date': fileTimestamp.toIso8601String(),
+          'favourite': 0,
+          'is_deleted': 0,
+        };
+        
+        await _dbHelper.createDocumentDetail(documentDetailMap);
+        log('✓ Saved single image to DocumentDetail table');
+      } else {
+        // Multiple images: First image in Document table, all images in DocumentDetail table
+        int successCount = 0;
+
+        // Process first image for Document table
+        final firstImagePath = result.images[0];
+        final firstImageFile = File(firstImagePath);
+
+        if (!await firstImageFile.exists()) {
+          log('First image file does not exist: $firstImagePath');
+          throw Exception('First image file does not exist');
+        }
+
+        // Read first image bytes
+        final firstImageBytes = await firstImageFile.readAsBytes();
+        
+        // Save first image file
+        final firstFileTimestamp = baseTimestamp;
+        final firstFileTimestampMs = firstFileTimestamp.millisecondsSinceEpoch;
+        final firstSavedFilePath = '${imagesDir.path}/img_${firstFileTimestampMs}.jpg';
+        
+        final firstFile = File(firstSavedFilePath);
+        await firstFile.writeAsBytes(firstImageBytes);
+        
+        // Generate thumbnail for first image
+        String? firstSavedThumbnailPath;
+        final firstThumbnailBytes = await fileStorageService.generateImageThumbnail(firstImageBytes);
+        if (firstThumbnailBytes != null) {
+          firstSavedThumbnailPath = '${imagesDir.path}/thumb_${firstFileTimestampMs}.jpg';
+          final firstThumbFile = File(firstSavedThumbnailPath);
+          await firstThumbFile.writeAsBytes(firstThumbnailBytes);
+        }
+
+        // Create title for document
+        baseTitle = 'Scanned Document ${firstFileTimestampMs}';
+
+        // Save first image to Document table
+        final documentMap = {
+          'title': baseTitle,
+          'type': 'image',
+          'Image_path': firstSavedFilePath,
+          'image_thumbnail': firstSavedThumbnailPath,
+          'created_date': firstFileTimestamp.toIso8601String(),
+          'updated_date': firstFileTimestamp.toIso8601String(),
+          'favourite': 0,
+          'is_deleted': 0,
+        };
+        
+        documentId = await _dbHelper.createDocument(documentMap);
+        log('✓ Saved first image to Document table with ID: $documentId');
+
+        // Process all images for DocumentDetail table
+        for (int i = 0; i < result.images.length; i++) {
+          try {
+            String savedFilePath;
+            String? savedThumbnailPath;
+            final fileTimestamp = baseTimestamp.add(Duration(milliseconds: i));
+
+            if (i == 0) {
+              // Reuse the first image file that was already saved to Document table
+              savedFilePath = firstSavedFilePath;
+              savedThumbnailPath = firstSavedThumbnailPath;
+            } else {
+              // Process remaining images
+              final imagePath = result.images[i];
+              final imageFile = File(imagePath);
+
+              if (!await imageFile.exists()) {
+                log('Image file does not exist: $imagePath');
+                continue;
+              }
+
+              // Read image bytes
+              final imageBytes = await imageFile.readAsBytes();
+              
+              // Save image file
+              final fileTimestampMs = fileTimestamp.millisecondsSinceEpoch;
+              savedFilePath = '${imagesDir.path}/img_${fileTimestampMs}_${i}.jpg';
+              
+              final file = File(savedFilePath);
+              await file.writeAsBytes(imageBytes);
+              
+              // Generate thumbnail
+              final thumbnailBytes = await fileStorageService.generateImageThumbnail(imageBytes);
+              if (thumbnailBytes != null) {
+                savedThumbnailPath = '${imagesDir.path}/thumb_${fileTimestampMs}_${i}.jpg';
+                final thumbFile = File(savedThumbnailPath);
+                await thumbFile.writeAsBytes(thumbnailBytes);
+              }
+            }
+
+            // Create DocumentDetail entry
+            final documentDetailMap = {
+              'document_id': documentId,
+              'title': '$baseTitle - Page ${i + 1}',
+              'type': 'image',
+              'Image_path': savedFilePath,
+              'image_thumbnail': savedThumbnailPath,
+              'created_date': fileTimestamp.toIso8601String(),
+              'updated_date': fileTimestamp.toIso8601String(),
+              'favourite': 0,
+              'is_deleted': 0,
+            };
+            
+            await _dbHelper.createDocumentDetail(documentDetailMap);
             successCount++;
-            log('Saved scanned image ${i + 1}/${result.images.length} with ID: $docId');
-          } else {
-            log('Failed to save scanned image ${i + 1} to database');
+            log('✓ Saved image ${i + 1}/${result.images.length} to DocumentDetail table');
+          } catch (e) {
+            log('Error saving image ${i + 1}: $e');
           }
-        } catch (e) {
-          log('Error saving scanned image ${i + 1}: $e');
+        }
+
+        log('Successfully saved ${successCount}/${result.images.length} images to DocumentDetail table');
+        
+        if (successCount == 0) {
+          throw Exception('Failed to save any images to DocumentDetail table');
         }
       }
 
-      log('Successfully saved ${successCount}/${result.images.length} scanned images');
-      
-      if (successCount == 0) {
-        throw Exception('Failed to save any scanned images');
-      }
+      log('Successfully completed scanAndSaveDocument');
     } catch (e) {
       log('Error in scanAndSaveDocument: $e');
       rethrow;
     }
   }
-
-  /// Scan additional pages and save as new documents using FileStorageService
+  
+  /// Scan additional pages and save to DocumentDetail table
   Future<void> scanAndAddPagesToDocument({
     required int documentId,
     required DocumentScanningResult result,
@@ -84,12 +234,17 @@ class DocumentScanService {
       }
 
       // Get document to get context (optional, for naming)
-      final document = await _dbHelper.getDocumentById(documentId);
-      final baseTitle = document?.title ?? 'Scanned Document';
+      final document = await _dbHelper.getDocument(documentId);
+      final baseTitle = document?['title']?.toString() ?? 'Scanned Document';
 
-      // Use FileStorageService to save images and create database entries
       final fileStorageService = FileStorageService.instance;
+      final imagesDir = await fileStorageService.getImagesDirectory();
+      final baseTimestamp = DateTime.now();
       int successCount = 0;
+
+      // Get existing DocumentDetail count to determine next index
+      final existingDetails = await _dbHelper.getDocumentDetailsByDocumentId(documentId);
+      final nextIndex = existingDetails.length;
 
       for (int i = 0; i < result.images.length; i++) {
         try {
@@ -104,24 +259,39 @@ class DocumentScanService {
           // Read image bytes
           final imageBytes = await imageFile.readAsBytes();
           
-          // Generate filename
-          final timestamp = DateTime.now().millisecondsSinceEpoch;
-          final fileName = 'scanned_${timestamp}_$i.jpg';
-          final title = '$baseTitle - Page ${i + 1}';
-
-          // Save using FileStorageService
-          final docId = await fileStorageService.saveImageFile(
-            imageBytes: imageBytes,
-            fileName: fileName,
-            title: title,
-          );
-
-          if (docId != null) {
-            successCount++;
-            log('Saved additional page ${i + 1}/${result.images.length} with ID: $docId');
-          } else {
-            log('Failed to save additional page ${i + 1} to database');
+          // Save image file
+          final fileTimestamp = baseTimestamp.add(Duration(milliseconds: i));
+          final fileTimestampMs = fileTimestamp.millisecondsSinceEpoch;
+          final savedFilePath = '${imagesDir.path}/img_${fileTimestampMs}_${nextIndex + i}.jpg';
+          
+          final file = File(savedFilePath);
+          await file.writeAsBytes(imageBytes);
+          
+          // Generate thumbnail
+          String? savedThumbnailPath;
+          final thumbnailBytes = await fileStorageService.generateImageThumbnail(imageBytes);
+          if (thumbnailBytes != null) {
+            savedThumbnailPath = '${imagesDir.path}/thumb_${fileTimestampMs}_${nextIndex + i}.jpg';
+            final thumbFile = File(savedThumbnailPath);
+            await thumbFile.writeAsBytes(thumbnailBytes);
           }
+
+          // Create DocumentDetail entry
+          final documentDetailMap = {
+            'document_id': documentId,
+            'title': '$baseTitle - Page ${nextIndex + i + 1}',
+            'type': 'image',
+            'Image_path': savedFilePath,
+            'image_thumbnail': savedThumbnailPath,
+            'created_date': fileTimestamp.toIso8601String(),
+            'updated_date': fileTimestamp.toIso8601String(),
+            'favourite': 0,
+            'is_deleted': 0,
+          };
+          
+          await _dbHelper.createDocumentDetail(documentDetailMap);
+          successCount++;
+          log('✓ Saved additional page ${i + 1}/${result.images.length} to DocumentDetail table');
         } catch (e) {
           log('Error saving additional page ${i + 1}: $e');
         }
@@ -144,26 +314,36 @@ class DocumentScanService {
   Future<void> deleteDocumentWithImages(int documentId) async {
     try {
       // Get document and its details
-      final document = await _dbHelper.getDocumentById(documentId);
+      final document = await _dbHelper.getDocument(documentId);
       final details = await _dbHelper.getDocumentDetailsByDocumentId(documentId);
 
-      // Delete image files
+      // Delete image files from Document table
       if (document != null) {
-        await _deleteImageFile(document.imagePath);
-        if (document.thumbnailPath != null) {
-          await _deleteImageFile(document.thumbnailPath!);
+        final imagePath = document['Image_path']?.toString();
+        final thumbnailPath = document['image_thumbnail']?.toString();
+        
+        if (imagePath != null && imagePath.isNotEmpty) {
+          await _deleteImageFile(imagePath);
+        }
+        if (thumbnailPath != null && thumbnailPath.isNotEmpty) {
+          await _deleteImageFile(thumbnailPath);
         }
       }
 
-      // Delete detail image files
+      // Delete detail image files from DocumentDetail table
       for (final detail in details) {
-        await _deleteImageFile(detail.imagePath);
-        if (detail.thumbnailPath != null) {
-          await _deleteImageFile(detail.thumbnailPath!);
+        final imagePath = detail['Image_path']?.toString();
+        final thumbnailPath = detail['image_thumbnail']?.toString();
+        
+        if (imagePath != null && imagePath.isNotEmpty) {
+          await _deleteImageFile(imagePath);
+        }
+        if (thumbnailPath != null && thumbnailPath.isNotEmpty) {
+          await _deleteImageFile(thumbnailPath);
         }
       }
 
-      // Delete from database (CASCADE will handle DocumentDetail)
+      // Delete from database
       await _dbHelper.deleteDocument(documentId);
       log('Document and all images deleted successfully');
     } catch (e) {

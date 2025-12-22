@@ -87,6 +87,7 @@ class MyApp extends StatelessWidget {
                 return MoveCopyScreen(
                   document: arguments!['document'],
                   action: arguments['action'],
+                  documentDetails: arguments['documentDetails'] as List<Map<String, dynamic>>? ?? [],
                 );
               },
             ),

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import '../../Constants/app_constants.dart';
 import '../../Routes/navigation_service.dart';
-import '../../Services/database_helper.dart';
+import '../../Services/tag_service.dart';
 import '../../Models/tag_model.dart';
 
 class ManageTagsScreen extends StatefulWidget {
@@ -13,7 +13,7 @@ class ManageTagsScreen extends StatefulWidget {
 }
 
 class _ManageTagsScreenState extends State<ManageTagsScreen> {
-  final DatabaseHelper _db = DatabaseHelper.instance;
+  final TagService _tagService = TagService.instance;
   List<Tag> _tags = [];
   bool _isLoading = true;
 
@@ -31,7 +31,7 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
     });
 
     try {
-      final tags = await _db.getAllTags();
+      final tags = await _tagService.getAllTags();
       if (mounted) {
         setState(() {
           _tags = tags;
@@ -162,17 +162,20 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
               }
 
               try {
-                // Check for duplicate tag names in database
-                final tagExists = await _db.tagExists(tagName);
-                if (tagExists) {
+                // Check for duplicate tag names using TagService
+                final existingTag = await _tagService.findTagByTitle(tagName);
+                if (existingTag != null) {
                   if (mounted) {
                     _showToast('Tag "$tagName" already exists', isWarning: true);
                   }
                   return;
                 }
 
-                final tag = Tag(title: tagName);
-                await _db.insertTag(tag);
+                // Create tag using TagService
+                await _tagService.createTag(
+                  title: tagName,
+                  isDefault: false,
+                );
                 
                 if (mounted) {
                   Navigator.pop(context);
@@ -255,12 +258,13 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
               }
 
               try {
-                final rowsAffected = await _db.deleteTag(tag.id!);
+                // Delete tag using TagService
+                final deleted = await _tagService.deleteTag(tag.id!);
                 
                 if (mounted) {
                   Navigator.pop(context);
                   
-                  if (rowsAffected > 0) {
+                  if (deleted) {
                     // Reload tags from database
                     await _loadTags();
                     
@@ -486,7 +490,7 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
     final tagColor = _getTagColor(index);
     final tagIcon = _getTagIcon(tag.title);
     final tagName = tag.title;
-    final createdAt = tag.createdAt;
+    final createdAt = tag.createdDate;
     final isDefault = tag.isDefault;
 
     return TweenAnimationBuilder<double>(
@@ -766,8 +770,8 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
               }
 
               try {
-                // Check for duplicate tag names in database (excluding current tag)
-                final existingTag = await _db.getTagByName(newTagName);
+                // Check for duplicate tag names using TagService (excluding current tag)
+                final existingTag = await _tagService.findTagByTitle(newTagName);
                 if (existingTag != null && existingTag.id != tag.id) {
                   if (mounted) {
                     _showToast('Tag "$newTagName" already exists', isWarning: true);
@@ -775,16 +779,17 @@ class _ManageTagsScreenState extends State<ManageTagsScreen> {
                   return;
                 }
 
+                // Update tag using TagService
                 final updatedTag = tag.copyWith(
                   title: newTagName,
-                  updatedAt: DateTime.now(),
+                  updatedDate: DateTime.now(),
                 );
-                final rowsAffected = await _db.updateTag(updatedTag);
+                final updated = await _tagService.updateTag(updatedTag);
                 
                 if (mounted) {
                   Navigator.pop(context);
                   
-                  if (rowsAffected > 0) {
+                  if (updated) {
                     // Reload tags from database
                     await _loadTags();
                     

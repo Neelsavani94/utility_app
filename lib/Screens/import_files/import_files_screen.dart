@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,6 +14,7 @@ import '../../Providers/home_provider.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Models/document_model.dart';
 import '../../Services/file_storage_service.dart';
+import '../../Services/database_helper.dart';
 import '../home/document_detail_screen.dart';
 import '../extract_text/extract_text_screen.dart';
 import '../../modules/watermark/watermark_screen.dart';
@@ -44,8 +46,18 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<HomeProvider>().loadDocuments();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Load all documents from Documents table when screen opens
+      if (mounted) {
+        try {
+          final provider = context.read<HomeProvider>();
+          developer.log('Import Files Screen: Loading all documents from Documents table');
+          await provider.loadDocumentsFromTable();
+          developer.log('Import Files Screen: Documents loaded successfully');
+        } catch (e) {
+          developer.log('Import Files Screen: Error loading documents: $e');
+        }
+      }
     });
   }
 
@@ -206,7 +218,10 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
       );
     }
 
-    final documents = provider.filteredDocuments;
+    // Get all documents from Documents table - ensure we're showing all
+    final documents = provider.filteredImportDocuments;
+    
+    developer.log('Import Files Screen: Displaying ${documents.length} documents from Documents table');
 
     if (documents.isEmpty) {
       return Padding(
@@ -227,6 +242,15 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
                   fontSize: 14,
                 ),
               ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () async {
+                  // Reload all documents from Documents table
+                  developer.log('Import Files Screen: Refreshing documents list');
+                  await provider.loadDocumentsFromTable();
+                },
+                child: const Text('Refresh'),
+              ),
             ],
           ),
         ),
@@ -236,13 +260,30 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
         Text(
-          'All Docs',
+              'All Documents (${documents.length})',
           style: TextStyle(
             color: colorScheme.onSurface,
             fontSize: 16,
             fontWeight: FontWeight.w600,
           ),
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.refresh_rounded,
+                color: colorScheme.primary,
+                size: 20,
+              ),
+              onPressed: () async {
+                developer.log('Import Files Screen: Refreshing documents list from Documents table');
+                await provider.loadDocumentsFromTable();
+              },
+              tooltip: 'Refresh',
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         ListView.separated(
@@ -252,6 +293,7 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
           separatorBuilder: (context, index) => const SizedBox(height: 1),
           itemBuilder: (context, index) {
             final document = documents[index];
+            developer.log('Import Files Screen: Displaying document ${index + 1}: ${document.name}');
             return _buildDocumentCard(
               context,
               document,
@@ -305,7 +347,7 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
             if (await file.exists()) {
               // Check if file is PDF
               final isPDF = file.path.toLowerCase().endsWith('.pdf');
-
+              
               if (isPDF) {
                 // Convert PDF pages to images
                 await _convertPdfToImagesAndNavigate(
@@ -587,13 +629,13 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
       }
 
       final imageFiles = pickedFiles.map((f) => File(f.path)).toList();
-
+      
       // If in merge or arrange mode, return files instead of importing
       if (widget.forMerge || widget.forArrange) {
         Navigator.of(context).pop(imageFiles);
         return;
       }
-
+      
       await _importFiles(context, colorScheme, imageFiles);
     } catch (e) {
       if (context.mounted) {
@@ -647,10 +689,10 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
       }
 
       // If in merge or arrange mode, return files instead of importing
-      if (widget.forMerge || widget.forArrange) {
-        Navigator.of(context).pop(files);
-        return;
-      }
+      // if (widget.forMerge || widget.forArrange) {
+      //   Navigator.of(context).pop(files);
+      //   return;
+      // }
 
       await _importFiles(context, colorScheme, files);
     } catch (e) {
@@ -673,15 +715,22 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
     if (files.isEmpty) return;
 
     final fileStorageService = FileStorageService.instance;
+    final dbHelper = DatabaseHelper.instance;
     int successCount = 0;
+    int totalDatabaseEntries = 0;
+
+    developer.log('=== IMPORT FILES START ===');
+    developer.log('Total files to import: ${files.length}');
 
     // Process each file
-    for (final file in files) {
+    for (int fileIndex = 0; fileIndex < files.length; fileIndex++) {
+      final file = files[fileIndex];
       if (!context.mounted) break;
 
       try {
         // Check if file exists
         if (!await file.exists()) {
+          developer.log('File ${fileIndex + 1}: File does not exist - ${file.path}');
           continue;
         }
 
@@ -689,9 +738,13 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
         final extension = file.path.toLowerCase().split('.').last;
         final fileName = file.path.split('/').last;
 
+        developer.log('--- Processing file ${fileIndex + 1}/${files.length} ---');
+        developer.log('File: $fileName, Extension: $extension');
+
         // Check if it's an image file
         if (['jpg', 'jpeg', 'png', 'bmp', 'webp', 'heic'].contains(extension)) {
           // For images: Open editor first, then save edited image
+          developer.log('Opening image editor for: $fileName');
 
           // Open image editor
           final editedBytes = await Navigator.of(context).push<Uint8List>(
@@ -700,56 +753,217 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
               builder: (_) => ImageEditorPage(
                 imageFile: file,
                 hostTheme: Theme.of(context),
-              ),
-            ),
-          );
+          ),
+        ),
+      );
 
           // Save edited image if user completed editing
           if (editedBytes != null && context.mounted) {
-            // Save edited image to database
-            final docId = await fileStorageService.saveImageFile(
-              imageBytes: editedBytes,
+            developer.log('Image edited, saving to database...');
+            
+            try {
+              // Save edited image to Document table
+              final docId = await fileStorageService.saveImageFile(
+                imageBytes: editedBytes,
+                fileName: fileName,
+              );
+
+              if (docId != null) {
+                developer.log('✓ Image saved to Documents table (ID: $docId)');
+                
+                // Get the created document to get file paths
+                final document = await dbHelper.getDocument(docId);
+                if (document != null) {
+                  // IMPORTANT: Also save single images to DocumentDetail table
+                  try {
+                    final timestamp = DateTime.now();
+                    final fileNameWithoutExt = fileName.contains('.')
+                        ? fileName.substring(0, fileName.lastIndexOf('.'))
+                        : fileName;
+                    
+                    final documentDetailMap = {
+                      'document_id': docId,
+                      'title': '${fileNameWithoutExt}_0',
+                      'type': 'image',
+                      'Image_path': document['Image_path']?.toString() ?? '',
+                      'image_thumbnail': document['image_thumbnail']?.toString() ?? '',
+                      'created_date': timestamp.toIso8601String(),
+                      'updated_date': timestamp.toIso8601String(),
+                      'favourite': 0,
+                      'is_deleted': 0,
+                    };
+                    
+                    final detailId = await dbHelper.createDocumentDetail(documentDetailMap);
+                    developer.log('✓ Single image saved to DocumentDetail table (ID: $detailId, document_id: $docId)');
+                  } catch (e) {
+                    developer.log('✗ Error saving to DocumentDetail table: $e');
+                  }
+                }
+                
+                // Save to ImportDocument table
+                try {
+                  final timestamp = DateTime.now();
+                  final document = await dbHelper.getDocument(docId);
+                  
+                  final importDocId = await dbHelper.createImportDocument({
+                    'title': document?['title']?.toString() ?? fileName,
+                    'image_path': document?['Image_path']?.toString() ?? '',
+                    'image_thumbnail': document?['image_thumbnail']?.toString() ?? '',
+                    'created_date': timestamp.toIso8601String(),
+                    'updated_date': timestamp.toIso8601String(),
+                  });
+                  developer.log('✓ Document saved to ImportDocument table (ID: $importDocId)');
+                } catch (e) {
+                  developer.log('✗ Error saving to ImportDocument table: $e');
+                }
+                
+                successCount++;
+                developer.log('✓ File ${fileIndex + 1} imported successfully');
+              } else {
+                developer.log('✗ Failed to save image to database - docId is null');
+              }
+            } catch (e) {
+              developer.log('✗ Error saving image file: $e');
+              // Continue with next file
+            }
+          } else {
+            developer.log('⚠ Image editing cancelled or no changes made');
+          }
+        } else if (extension == 'pdf') {
+          // For PDFs: Save directly without editing
+          developer.log('Saving PDF directly to database...');
+          
+          try {
+            final fileBytes = await file.readAsBytes();
+            // Save PDF to Document table
+            final docId = await fileStorageService.savePDFFile(
+              pdfBytes: fileBytes,
               fileName: fileName,
             );
 
             if (docId != null) {
+              developer.log('✓ PDF saved to Documents table (ID: $docId)');
+              
+              // Get the created document to get file paths
+              final document = await dbHelper.getDocument(docId);
+              if (document != null) {
+                // IMPORTANT: Also save single PDFs to DocumentDetail table
+                try {
+                  final timestamp = DateTime.now();
+                  final fileNameWithoutExt = fileName.contains('.')
+                      ? fileName.substring(0, fileName.lastIndexOf('.'))
+                      : fileName;
+                  
+                  final documentDetailMap = {
+                    'document_id': docId,
+                    'title': '${fileNameWithoutExt}_0',
+                    'type': 'pdf',
+                    'Image_path': document['Image_path']?.toString() ?? '',
+                    'image_thumbnail': document['image_thumbnail']?.toString() ?? '',
+                    'created_date': timestamp.toIso8601String(),
+                    'updated_date': timestamp.toIso8601String(),
+                    'favourite': 0,
+                    'is_deleted': 0,
+                  };
+                  
+                  final detailId = await dbHelper.createDocumentDetail(documentDetailMap);
+                  developer.log('✓ Single PDF saved to DocumentDetail table (ID: $detailId, document_id: $docId)');
+                } catch (e) {
+                  developer.log('✗ Error saving to DocumentDetail table: $e');
+                }
+              }
+              
+              // Save to ImportDocument table
+              try {
+                final timestamp = DateTime.now();
+                final document = await dbHelper.getDocument(docId);
+                
+                final importDocId = await dbHelper.createImportDocument({
+                  'title': document?['title']?.toString() ?? fileName,
+                  'image_path': document?['Image_path']?.toString() ?? '',
+                  'image_thumbnail': document?['image_thumbnail']?.toString() ?? '',
+                  'created_date': timestamp.toIso8601String(),
+                  'updated_date': timestamp.toIso8601String(),
+                });
+                developer.log('✓ Document saved to ImportDocument table (ID: $importDocId)');
+              } catch (e) {
+                developer.log('✗ Error saving to ImportDocument table: $e');
+              }
+              
               successCount++;
+              developer.log('✓ File ${fileIndex + 1} imported successfully');
+            } else {
+              developer.log('✗ Failed to save PDF to database - docId is null');
             }
+          } catch (e) {
+            developer.log('✗ Error saving PDF file: $e');
+            // Continue with next file
           }
-        } else if (extension == 'pdf') {
-          // For PDFs: Save directly without editing
-          final fileBytes = await file.readAsBytes();
-          final docId = await fileStorageService.savePDFFile(
-            pdfBytes: fileBytes,
-            fileName: fileName,
-          );
-
-          if (docId != null) {
-            successCount++;
-          }
+        } else {
+          developer.log('⚠ Unsupported file type: $extension');
         }
       } catch (e) {
-        print('Error processing file ${file.path}: $e');
+        developer.log('✗ Error processing file ${fileIndex + 1} (${file.path}): $e');
         // Continue with next file
       }
     }
 
+    // Final summary log
+    developer.log('=== IMPORT FILES COMPLETE ===');
+    developer.log('Summary:');
+    developer.log('  - Total files processed: ${files.length}');
+    developer.log('  - Successfully imported: $successCount');
+    developer.log('  - TOTAL DATABASE ENTRIES: $totalDatabaseEntries');
+    developer.log('===========================');
+
     // Refresh and show result
     if (context.mounted) {
-      final provider = Provider.of<HomeProvider>(context, listen: false);
-      provider.loadDocuments();
+      try {
+        final provider = Provider.of<HomeProvider>(context, listen: false);
+        developer.log('Refreshing documents list...');
+        
+        // Small delay to ensure all database writes are complete
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        // Reload all documents from Documents table to show newly imported ones
+        await provider.loadDocumentsFromTable();
+        
+        // Verify documents were loaded
+        final loadedDocs = provider.filteredImportDocuments;
+        developer.log('✓ Documents list refreshed - ${loadedDocs.length} documents from Documents table now available');
+        
+        // Additional verification: Check if new documents appear in the list
+        if (successCount > 0) {
+          developer.log('Verifying imported documents are in the list...');
+          // The documents should now be visible in the list
+        }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '$successCount of ${files.length} file(s) imported successfully',
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$successCount of ${files.length} file(s) imported successfully',
+            ),
+            backgroundColor: successCount > 0
+                ? colorScheme.primary
+                : colorScheme.error,
+            duration: const Duration(seconds: 2),
           ),
-          backgroundColor: successCount > 0
-              ? colorScheme.primary
-              : colorScheme.error,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+        );
+      } catch (e, stackTrace) {
+        developer.log('✗ Error refreshing documents: $e');
+        developer.log('Stack trace: $stackTrace');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+                'Files imported but error refreshing list: $e',
+              ),
+            backgroundColor: colorScheme.error,
+              duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
     }
   }
 
@@ -819,11 +1033,11 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
 
       // Render all pages and convert to images
       final imageStream = Printing.raster(pdfBytes, dpi: 300);
-
+      
       int pageIndex = 0;
       await for (final imageRaster in imageStream) {
         if (pageIndex >= pageCount) break;
-
+        
         try {
           final imageBytes = await imageRaster.toPng();
 
@@ -838,7 +1052,7 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
         } catch (e) {
           print('Error converting page ${pageIndex + 1}: $e');
         }
-
+        
         pageIndex++;
       }
 
@@ -860,7 +1074,7 @@ class _ImportFilesScreenState extends State<ImportFilesScreen> {
       // Close loading dialog
       if (context.mounted) {
         Navigator.of(context).pop();
-
+        
         // Navigate to Arrange Files screen with all image files
         Navigator.push(
           context,
