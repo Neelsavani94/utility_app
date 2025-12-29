@@ -182,17 +182,7 @@ class _MoveCopyScreenState extends State<MoveCopyScreen> {
                         colorScheme: colorScheme,
                         isDark: isDark,
                         onTap: () {
-                          // Handle create folder
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Create Folder'),
-                              backgroundColor: colorScheme.primary,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                          );
+                          _showCreateFolderDialog(context, colorScheme, isDark);
                         },
                       ),
                     ),
@@ -400,6 +390,23 @@ class _MoveCopyScreenState extends State<MoveCopyScreen> {
   }
 
   Widget _buildDocumentThumbnail(DocumentModel document, ColorScheme colorScheme, double size) {
+    // Check if it's a folder
+    if (document.category.toLowerCase() == 'folder') {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: colorScheme.primary.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          Icons.folder_rounded,
+          color: colorScheme.primary,
+          size: size * 0.5,
+        ),
+      );
+    }
+    
     final thumbnailPath = document.thumbnailPath;
     
     // If thumbnail exists and is not empty, show thumbnail
@@ -497,6 +504,157 @@ class _MoveCopyScreenState extends State<MoveCopyScreen> {
       imagePath: imagePath.isNotEmpty ? imagePath : thumbnailPath,
       isDeleted: isDeleted,
       deletedAt: null,
+    );
+  }
+
+  void _showCreateFolderDialog(
+    BuildContext context,
+    ColorScheme colorScheme,
+    bool isDark,
+  ) {
+    final nameController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDark
+            ? colorScheme.surface.withOpacity(0.95)
+            : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'Create Folder',
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'Folder name',
+            hintStyle: TextStyle(color: colorScheme.onSurface.withOpacity(0.4)),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(
+                color: colorScheme.outline.withOpacity(0.2),
+              ),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: colorScheme.primary, width: 2),
+            ),
+          ),
+          style: TextStyle(color: colorScheme.onSurface),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: TextStyle(color: colorScheme.onSurface.withOpacity(0.6)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final folderName = nameController.text.trim();
+              if (folderName.isEmpty) {
+                Fluttertoast.showToast(
+                  msg: 'Please enter a folder name',
+                  toastLength: Toast.LENGTH_SHORT,
+                  gravity: ToastGravity.BOTTOM,
+                  backgroundColor: Colors.orange,
+                  textColor: Colors.white,
+                );
+                return;
+              }
+
+              try {
+                // Check for duplicate folder names in Documents table
+                final allDocuments = await _db.getAllDocuments();
+                final existingFolder = allDocuments.firstWhere(
+                  (doc) =>
+                      (doc['type'] as String? ?? '').toLowerCase() == 'folder' &&
+                      (doc['title'] as String? ?? '').toLowerCase() ==
+                          folderName.toLowerCase() &&
+                      (doc['is_deleted'] as int? ?? 0) == 0,
+                  orElse: () => <String, dynamic>{
+                    'title': '',
+                    'type': '',
+                  },
+                );
+
+                if ((existingFolder['title'] as String? ?? '').isNotEmpty) {
+                  Fluttertoast.showToast(
+                    msg: 'Folder "$folderName" already exists',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.orange,
+                    textColor: Colors.white,
+                  );
+                  return;
+                }
+
+                // Create folder as a document with type "Folder"
+                final now = DateTime.now().toIso8601String();
+                final folderDocument = {
+                  'title': folderName,
+                  'type': 'Folder',
+                  'created_date': now,
+                  'updated_date': now,
+                  'favourite': 0,
+                  'Image_path': '',
+                  'image_thumbnail': '',
+                  'is_deleted': 0,
+                };
+
+                await _db.createDocument(folderDocument);
+                
+                // Refresh the documents list
+                await _loadDocuments();
+                
+                // Refresh provider to update other screens
+                if (context.mounted) {
+                  final homeProvider = Provider.of<HomeProvider>(context, listen: false);
+                  await homeProvider.loadDocuments();
+                }
+
+                if (context.mounted) {
+                  Navigator.pop(context);
+
+                  Fluttertoast.showToast(
+                    msg: 'Folder "$folderName" created successfully',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.green,
+                    textColor: Colors.white,
+                  );
+                }
+              } catch (e) {
+                log('Error creating folder: $e');
+                if (context.mounted) {
+                  Fluttertoast.showToast(
+                    msg: 'Error creating folder: ${e.toString()}',
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM,
+                    backgroundColor: Colors.red,
+                    textColor: Colors.white,
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: colorScheme.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
     );
   }
 

@@ -31,6 +31,7 @@ import '../../Services/photo_editor_service.dart';
 import '../../Widget/app_logo.dart';
 import '../settings/settings_screen.dart';
 import 'document_detail_screen.dart';
+import '../manual_scanner/custom_document_scanner_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -187,12 +188,12 @@ class _HomeScreenState extends State<HomeScreen>
                 // Refresh documents
                 provider.loadDocuments();
                 // Refresh tags
-                _loadTags();
+              _loadTags();
                 // Check if tools setting has changed (already checked above, but ensure sync)
-                if (_showToolsOnHome != currentShowTools) {
-                  setState(() {
-                    _showToolsOnHome = currentShowTools;
-                  });
+              if (_showToolsOnHome != currentShowTools) {
+                setState(() {
+                  _showToolsOnHome = currentShowTools;
+                });
                 }
               }
             }
@@ -212,13 +213,13 @@ class _HomeScreenState extends State<HomeScreen>
                 // Refresh documents
                 provider.loadDocuments();
                 // Refresh tags
-                _loadTags();
-                // Check if tools setting has changed
-                final currentShowTools = SettingsScreen.getShowToolsOnHome();
-                if (_showToolsOnHome != currentShowTools) {
-                  setState(() {
-                    _showToolsOnHome = currentShowTools;
-                  });
+              _loadTags();
+              // Check if tools setting has changed
+              final currentShowTools = SettingsScreen.getShowToolsOnHome();
+              if (_showToolsOnHome != currentShowTools) {
+                setState(() {
+                  _showToolsOnHome = currentShowTools;
+                });
                 }
               }
             }
@@ -1734,8 +1735,24 @@ class _HomeScreenState extends State<HomeScreen>
     final status = await Permission.camera.request();
 
     if (status.isGranted) {
-      // Permission granted, show scanner options dialog
-      _showScannerOptionsDialog(context, colorScheme, isDark);
+      // Permission granted, navigate to custom scanner screen
+      if (context.mounted) {
+        final scannerType = await Navigator.push<String>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const CustomDocumentScannerScreen(),
+          ),
+        );
+
+        // If scanner type is selected, open the appropriate scanner
+        if (scannerType != null && context.mounted) {
+          if (scannerType == 'ai') {
+            await _scanWithAIScanner();
+          } else if (scannerType == 'simple') {
+            await _scanWithSimpleScanner();
+          }
+        }
+      }
     } else if (status.isDenied) {
       // Permission denied, show message
       if (context.mounted) {
@@ -4067,7 +4084,7 @@ class _HomeScreenState extends State<HomeScreen>
 
         if (saveDirectory != null && !await saveDirectory.exists()) {
           await saveDirectory.create(recursive: true);
-
+          
           // Create .nomedia file to hide from gallery (Android)
           if (Platform.isAndroid) {
             final nomediaFile = File('${saveDirectory.path}/.nomedia');
@@ -4288,7 +4305,7 @@ class _HomeScreenState extends State<HomeScreen>
 
         if (pdfDir != null && !await pdfDir.exists()) {
           await pdfDir.create(recursive: true);
-
+          
           // Create .nomedia file to hide from gallery (Android)
           if (Platform.isAndroid) {
             final nomediaFile = File('${pdfDir.path}/.nomedia');
@@ -4298,12 +4315,66 @@ class _HomeScreenState extends State<HomeScreen>
           }
         }
       } else {
-        // Save PDF to app's documents directory (no permissions required)
-        // This is accessible via file manager in the app's folder
-        final directory = await getApplicationDocumentsDirectory();
-        pdfDir = Directory('${directory.path}/PDFs');
-        if (!await pdfDir.exists()) {
-          await pdfDir.create(recursive: true);
+        // Save PDF to device Download folder (public Downloads folder)
+        if (Platform.isAndroid) {
+          // For Android, use the public Downloads directory
+          // Try multiple common paths for public Downloads folder
+          final List<String> possiblePaths = [
+            '/storage/emulated/0/Download',
+            '/sdcard/Download',
+            '/storage/sdcard0/Download',
+            '/mnt/sdcard/Download',
+          ];
+          
+          // Try each path until one works
+          bool pathFound = false;
+          Directory? tempDir;
+          for (final pathStr in possiblePaths) {
+            try {
+              tempDir = Directory(pathStr);
+              // Check if directory exists or can be created
+              if (await tempDir.exists()) {
+                pathFound = true;
+                break;
+              } else {
+                // Try to create it (may fail due to permissions)
+                try {
+                  await tempDir.create(recursive: true);
+                  if (await tempDir.exists()) {
+                    pathFound = true;
+                    break;
+                  }
+                } catch (e) {
+                  // Cannot create, try next path
+                  continue;
+                }
+              }
+            } catch (e) {
+              // Continue to next path
+              continue;
+            }
+          }
+          
+          // If no public path worked, throw error (don't use app directory)
+          if (!pathFound || tempDir == null) {
+            throw Exception('Cannot access device Download folder. Please check storage permissions.');
+          } else {
+            pdfDir = tempDir;
+          }
+        } else if (Platform.isIOS) {
+          // For iOS, use documents directory
+          final directory = await getApplicationDocumentsDirectory();
+          pdfDir = Directory('${directory.path}/Download');
+          if (!await pdfDir.exists()) {
+            await pdfDir.create(recursive: true);
+          }
+        } else {
+          // Fallback for other platforms
+          final directory = await getApplicationDocumentsDirectory();
+          pdfDir = Directory('${directory.path}/Download');
+          if (!await pdfDir.exists()) {
+            await pdfDir.create(recursive: true);
+          }
         }
       }
 
@@ -4321,13 +4392,30 @@ class _HomeScreenState extends State<HomeScreen>
       final pdfBytes = await document.save();
       final pdfFile = File(pdfPath);
       await pdfFile.writeAsBytes(pdfBytes);
+      
+      // Verify file was written
+      if (!await pdfFile.exists()) {
+        throw Exception('File was not created successfully');
+      }
+      
+      // On Android, refresh media scanner to make file visible
+      if (!isLocked && Platform.isAndroid) {
+        try {
+          // Use platform channel to refresh media scanner
+          // This ensures the file appears in Downloads app
+          await _refreshMediaStore(pdfPath);
+        } catch (e) {
+          // Media scanner refresh is optional, continue even if it fails
+          log('Media scanner refresh failed: $e');
+        }
+      }
 
       // Show success message with file location
       if (context.mounted) {
         Fluttertoast.showToast(
           msg: isLocked
               ? 'Locked PDF saved: $pdfFileName\nLocation: Hidden folder (requires PIN)'
-              : 'PDF saved: $pdfFileName\nLocation: App Documents/PDFs',
+              : 'PDF saved: $pdfFileName\nLocation: Downloads folder',
           toastLength: Toast.LENGTH_LONG,
           gravity: ToastGravity.BOTTOM,
           backgroundColor: colorScheme.primary,
@@ -4353,6 +4441,17 @@ class _HomeScreenState extends State<HomeScreen>
       if (dialogShown && dialogContext != null && context.mounted) {
         Navigator.of(dialogContext!, rootNavigator: true).pop();
       }
+    }
+  }
+
+  /// Refresh media store on Android to make file visible in Downloads app
+  Future<void> _refreshMediaStore(String filePath) async {
+    try {
+      const platform = MethodChannel('com.example.utility_app/media');
+      await platform.invokeMethod('refreshMediaStore', {'path': filePath});
+    } catch (e) {
+      log('Media scanner refresh not available: $e');
+      log('File saved at: $filePath');
     }
   }
 

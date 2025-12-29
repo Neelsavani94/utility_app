@@ -1076,9 +1076,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
           ],
         ),
         child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
               // Handle bar
               Container(
                 margin: const EdgeInsets.only(top: 12, bottom: 12),
@@ -1108,8 +1108,8 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     width: 1,
                   ),
                 ),
-                child: Row(
-                  children: [
+              child: Row(
+                children: [
                     // Document Icon
                     Container(
                       width: 56,
@@ -1135,16 +1135,16 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _currentDocument?.title ?? widget.document.title,
-                            style: TextStyle(
+                        _currentDocument?.title ?? widget.document.title,
+                        style: TextStyle(
                               color: colorScheme.onSurface,
                               fontSize: 17,
                               fontWeight: FontWeight.w700,
                               letterSpacing: -0.3,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                           const SizedBox(height: 4),
                           Row(
                             children: [
@@ -1152,7 +1152,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                                 Icons.access_time_rounded,
                                 size: 12,
                                 color: colorScheme.onSurface.withOpacity(0.4),
-                              ),
+                    ),
                               const SizedBox(width: 4),
                               Text(
                                 _formatDate(widget.document.createdAt),
@@ -1161,9 +1161,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                                   fontSize: 12,
                                   fontWeight: FontWeight.w400,
                                 ),
-                              ),
-                            ],
-                          ),
+                  ),
+                ],
+              ),
                         ],
                       ),
                     ),
@@ -1194,7 +1194,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
               ),
               const SizedBox(height: 16),
               // Options Grid with Premium Design
-              Padding(
+            Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: GridView.builder(
                   shrinkWrap: true,
@@ -1219,14 +1219,14 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                           child: Transform.scale(
                             scale: 0.9 + (value * 0.1),
                             child: child,
-                          ),
+                  ),
                         );
                       },
                       child: Material(
                         color: Colors.transparent,
                         child: InkWell(
-                          onTap: () {
-                            Navigator.pop(context);
+                    onTap: () {
+                      Navigator.pop(context);
                             _handleDocumentOption(
                               context,
                               option['title'] as String,
@@ -1300,16 +1300,16 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                               ],
                             ),
                           ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                            ),
+                          ),
+                        );
+                    },
+                  ),
               ),
               SizedBox(
                 height: MediaQuery.of(context).viewInsets.bottom + 16,
-              ),
-            ],
+            ),
+          ],
           ),
         ),
       ),
