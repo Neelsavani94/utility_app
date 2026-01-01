@@ -483,6 +483,151 @@ class DocumentScanService {
     }
   }
 
+  /// Save edited image to DocumentDetail table for an existing document
+  Future<void> saveEditedImageToDocumentDetail({
+    required int documentId,
+    required Uint8List imageBytes,
+    required String originalFileName,
+  }) async {
+    try {
+      final fileStorageService = FileStorageService.instance;
+      final imagesDir = await fileStorageService.getImagesDirectory();
+      final fileTimestamp = DateTime.now();
+      final fileTimestampMs = fileTimestamp.millisecondsSinceEpoch;
+
+      // Get document to get context (for naming)
+      final document = await _dbHelper.getDocument(documentId);
+      final baseTitle = document?['title']?.toString() ?? 'Scanned Document';
+
+      // Get existing DocumentDetail count to determine next index
+      final existingDetails = await _dbHelper.getDocumentDetailsByDocumentId(documentId);
+      final nextIndex = existingDetails.length;
+
+      // Generate filename
+      final extension = path.extension(originalFileName);
+      final fileName = 'img_${fileTimestampMs}_${nextIndex}${extension.isEmpty ? '.jpg' : extension}';
+      final savedFilePath = '${imagesDir.path}/$fileName';
+
+      // Save image file
+      final file = File(savedFilePath);
+      await file.writeAsBytes(imageBytes);
+
+      // Generate thumbnail
+      String? savedThumbnailPath;
+      final thumbnailBytes = await fileStorageService.generateImageThumbnail(imageBytes);
+      if (thumbnailBytes != null) {
+        savedThumbnailPath = '${imagesDir.path}/thumb_${fileTimestampMs}_${nextIndex}.jpg';
+        final thumbFile = File(savedThumbnailPath);
+        await thumbFile.writeAsBytes(thumbnailBytes);
+      }
+
+      // Create DocumentDetail entry
+      final documentDetailMap = {
+        'document_id': documentId,
+        'title': '$baseTitle - Page ${nextIndex + 1}',
+        'type': 'image',
+        'Image_path': savedFilePath,
+        'image_thumbnail': savedThumbnailPath,
+        'created_date': fileTimestamp.toIso8601String(),
+        'updated_date': fileTimestamp.toIso8601String(),
+        'favourite': 0,
+        'is_deleted': 0,
+      };
+
+      await _dbHelper.createDocumentDetail(documentDetailMap);
+      log('✓ Saved edited image to DocumentDetail table for document ID: $documentId');
+    } catch (e) {
+      log('Error in saveEditedImageToDocumentDetail: $e');
+      rethrow;
+    }
+  }
+
+  /// Update existing DocumentDetail entry with edited image
+  Future<void> updateEditedImageInDocumentDetail({
+    required int documentDetailId,
+    required Uint8List imageBytes,
+    required String originalFileName,
+  }) async {
+    try {
+      // Get existing document detail to preserve metadata
+      final existingDetail = await _dbHelper.getDocumentDetail(documentDetailId);
+      if (existingDetail == null) {
+        throw Exception('Document detail not found with ID: $documentDetailId');
+      }
+
+      final fileStorageService = FileStorageService.instance;
+      final imagesDir = await fileStorageService.getImagesDirectory();
+      final fileTimestamp = DateTime.now();
+      final fileTimestampMs = fileTimestamp.millisecondsSinceEpoch;
+
+      // Delete old image files if they exist
+      final oldImagePath = existingDetail['Image_path']?.toString();
+      final oldThumbnailPath = existingDetail['image_thumbnail']?.toString();
+      
+      if (oldImagePath != null && oldImagePath.isNotEmpty) {
+        try {
+          final oldFile = File(oldImagePath);
+          if (await oldFile.exists()) {
+            await oldFile.delete();
+            log('Deleted old image file: $oldImagePath');
+          }
+        } catch (e) {
+          log('Error deleting old image file: $e');
+        }
+      }
+      
+      if (oldThumbnailPath != null && oldThumbnailPath.isNotEmpty) {
+        try {
+          final oldThumbFile = File(oldThumbnailPath);
+          if (await oldThumbFile.exists()) {
+            await oldThumbFile.delete();
+            log('Deleted old thumbnail file: $oldThumbnailPath');
+          }
+        } catch (e) {
+          log('Error deleting old thumbnail file: $e');
+        }
+      }
+
+      // Generate new filename
+      final extension = path.extension(originalFileName);
+      final fileName = 'img_${fileTimestampMs}${extension.isEmpty ? '.jpg' : extension}';
+      final savedFilePath = '${imagesDir.path}/$fileName';
+
+      // Save new image file
+      final file = File(savedFilePath);
+      await file.writeAsBytes(imageBytes);
+
+      // Generate new thumbnail
+      String? savedThumbnailPath;
+      final thumbnailBytes = await fileStorageService.generateImageThumbnail(imageBytes);
+      if (thumbnailBytes != null) {
+        savedThumbnailPath = '${imagesDir.path}/thumb_${fileTimestampMs}.jpg';
+        final thumbFile = File(savedThumbnailPath);
+        await thumbFile.writeAsBytes(thumbnailBytes);
+      }
+
+      // Update DocumentDetail entry (preserve existing metadata like title, document_id, created_date, etc.)
+      final documentDetailMap = {
+        'Image_path': savedFilePath,
+        'image_thumbnail': savedThumbnailPath,
+        'updated_date': fileTimestamp.toIso8601String(),
+        // Preserve other fields from existing detail
+        'document_id': existingDetail['document_id'],
+        'title': existingDetail['title'],
+        'type': existingDetail['type'] ?? 'image',
+        'favourite': existingDetail['favourite'] ?? 0,
+        'is_deleted': existingDetail['is_deleted'] ?? 0,
+        'created_date': existingDetail['created_date'], // Preserve original creation date
+      };
+
+      await _dbHelper.updateDocumentDetail(documentDetailId, documentDetailMap);
+      log('✓ Updated DocumentDetail entry with ID: $documentDetailId');
+    } catch (e) {
+      log('Error in updateEditedImageInDocumentDetail: $e');
+      rethrow;
+    }
+  }
+
   /// Helper to get filename without extension
   String _getFileNameWithoutExtension(String fileName) {
     final parts = fileName.split('.');

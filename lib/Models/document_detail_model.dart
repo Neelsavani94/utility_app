@@ -34,14 +34,12 @@ class DocumentDetail {
       'document_id': documentId,
       'title': title,
       'type': type,
-      'isFavourite': isFavourite ? 1 : 0,
-      'imagePath': imagePath,
-      'thumbnailPath': thumbnailPath,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-      'tag_id': tagId,
-      'isDeleted': isDeleted ? 1 : 0,
-      'deleted_at': deletedAt?.toIso8601String(),
+      'favourite': isFavourite ? 1 : 0,
+      'Image_path': imagePath,
+      'image_thumbnail': thumbnailPath,
+      'created_date': createdAt.toIso8601String(),
+      'updated_date': updatedAt.toIso8601String(),
+      'is_deleted': isDeleted ? 1 : 0,
     };
   }
 
@@ -52,16 +50,18 @@ class DocumentDetail {
       documentId: map['document_id'] as int,
       title: map['title'] as String,
       type: map['type'] as String,
-      isFavourite: (map['isFavourite'] as int) == 1,
-      imagePath: map['imagePath'] as String,
-      thumbnailPath: map['thumbnailPath'] as String?,
-      createdAt: DateTime.parse(map['created_at'] as String),
-      updatedAt: DateTime.parse(map['updated_at'] as String),
-      tagId: map['tag_id'] as int?,
-      isDeleted: (map['isDeleted'] as int) == 1,
-      deletedAt: map['deleted_at'] != null
-          ? DateTime.parse(map['deleted_at'] as String)
-          : null,
+      isFavourite: (map['favourite'] as int? ?? 0) == 1,
+      imagePath: map['Image_path'] as String? ?? '',
+      thumbnailPath: map['image_thumbnail'] as String?,
+      createdAt: map['created_date'] != null
+          ? DateTime.parse(map['created_date'] as String)
+          : DateTime.now(),
+      updatedAt: map['updated_date'] != null
+          ? DateTime.parse(map['updated_date'] as String)
+          : DateTime.now(),
+      tagId: null, // tag_id column doesn't exist in DocumentDetail table
+      isDeleted: (map['is_deleted'] as int? ?? 0) == 1,
+      deletedAt: null, // deleted_at column doesn't exist in DocumentDetail table
     );
   }
 

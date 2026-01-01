@@ -31,7 +31,7 @@ import '../../Services/photo_editor_service.dart';
 import '../../Widget/app_logo.dart';
 import '../settings/settings_screen.dart';
 import 'document_detail_screen.dart';
-import '../manual_scanner/custom_document_scanner_screen.dart';
+import '../manual_scanner/custom_scanner_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1737,20 +1737,21 @@ class _HomeScreenState extends State<HomeScreen>
     if (status.isGranted) {
       // Permission granted, navigate to custom scanner screen
       if (context.mounted) {
-        final scannerType = await Navigator.push<String>(
+        final scannerResult = await Navigator.push<String>(
           context,
           MaterialPageRoute(
-            builder: (context) => const CustomDocumentScannerScreen(),
+            builder: (context) => const CustomScannerScreen(),
           ),
         );
 
-        // If scanner type is selected, open the appropriate scanner
-        if (scannerType != null && context.mounted) {
-          if (scannerType == 'ai') {
-            await _scanWithAIScanner();
-          } else if (scannerType == 'simple') {
-            await _scanWithSimpleScanner();
-          }
+        // If AI scanner was selected, open it
+        if (scannerResult == 'ai' && context.mounted) {
+          await _scanWithAIScanner();
+        }
+        
+        // Reload documents after returning from scanner
+        if (context.mounted) {
+          context.read<HomeProvider>().loadDocuments();
         }
       }
     } else if (status.isDenied) {
@@ -4410,6 +4411,16 @@ class _HomeScreenState extends State<HomeScreen>
         }
       }
 
+      // Dismiss loading dialog before showing success message
+      if (dialogShown && dialogContext != null) {
+        try {
+          Navigator.of(dialogContext!, rootNavigator: true).pop();
+          dialogShown = false;
+        } catch (e) {
+          log('Error dismissing dialog: $e');
+        }
+      }
+
       // Show success message with file location
       if (context.mounted) {
         Fluttertoast.showToast(
@@ -4424,6 +4435,15 @@ class _HomeScreenState extends State<HomeScreen>
       }
     } catch (e) {
       log('Error converting images to PDF: $e');
+      // Dismiss dialog on error before showing error message
+      if (dialogShown && dialogContext != null) {
+        try {
+          Navigator.of(dialogContext!, rootNavigator: true).pop();
+          dialogShown = false;
+        } catch (e2) {
+          log('Error dismissing dialog: $e2');
+        }
+      }
       if (context.mounted) {
         Fluttertoast.showToast(
           msg: 'Error creating PDF: ${e.toString()}',
@@ -4437,9 +4457,13 @@ class _HomeScreenState extends State<HomeScreen>
       // Always dispose PDF document
       document?.dispose();
 
-      // Always close loading dialog using the stored dialog context
-      if (dialogShown && dialogContext != null && context.mounted) {
-        Navigator.of(dialogContext!, rootNavigator: true).pop();
+      // Always close loading dialog if still open (backup in case it wasn't dismissed)
+      if (dialogShown && dialogContext != null) {
+        try {
+          Navigator.of(dialogContext!, rootNavigator: true).pop();
+        } catch (e) {
+          log('Error dismissing dialog in finally: $e');
+        }
       }
     }
   }

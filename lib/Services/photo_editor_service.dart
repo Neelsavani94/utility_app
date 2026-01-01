@@ -3,10 +3,12 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pro_image_editor/pro_image_editor.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import '../Services/document_scan_serivce.dart';
+import '../Services/file_storage_service.dart';
 import '../Providers/home_provider.dart';
 import 'package:provider/provider.dart';
 
@@ -101,61 +103,159 @@ class PhotoEditorService {
     );
   }
 
-  /// Convert image bytes to PDF and save to download folder
+  /// Open ProImageEditor and save edited image to DocumentDetail table
+  Future<void> openEditorAndSaveToDocumentDetail({
+    required BuildContext context,
+    required File imageFile,
+    required int documentId,
+    String watermarkText = 'Scanify AI',
+  }) async {
+    try {
+      // Read image bytes
+      final imageBytes = await imageFile.readAsBytes();
+      final fileName = imageFile.path.split('/').last;
+
+      // Open ProImageEditor
+      final editedBytes = await Navigator.of(context).push<Uint8List>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => _ProImageEditorPage(
+            initialBytes: imageBytes,
+            watermarkText: watermarkText,
+            hostTheme: Theme.of(context),
+          ),
+        ),
+      );
+
+      // Save edited image if user completed editing
+      if (editedBytes != null && context.mounted) {
+        // Save to DocumentDetail table
+        await _scanService.saveEditedImageToDocumentDetail(
+          documentId: documentId,
+          imageBytes: editedBytes,
+          originalFileName: fileName,
+        );
+
+        // Refresh home screen documents
+        if (context.mounted) {
+          final provider = Provider.of<HomeProvider>(context, listen: false);
+          provider.loadDocuments();
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Page added successfully'),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Open ProImageEditor and update existing DocumentDetail entry
+  Future<void> openEditorAndUpdateDocumentDetail({
+    required BuildContext context,
+    required File imageFile,
+    required int documentDetailId,
+    String watermarkText = 'Scanify AI',
+  }) async {
+    try {
+      // Read image bytes
+      final imageBytes = await imageFile.readAsBytes();
+      final fileName = imageFile.path.split('/').last;
+
+      // Open ProImageEditor
+      final editedBytes = await Navigator.of(context).push<Uint8List>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => _ProImageEditorPage(
+            initialBytes: imageBytes,
+            watermarkText: watermarkText,
+            hostTheme: Theme.of(context),
+          ),
+        ),
+      );
+
+      // Update edited image if user completed editing
+      if (editedBytes != null && context.mounted) {
+        // Update existing DocumentDetail entry
+        await _scanService.updateEditedImageInDocumentDetail(
+          documentDetailId: documentDetailId,
+          imageBytes: editedBytes,
+          originalFileName: fileName,
+        );
+
+        // Refresh home screen documents
+        if (context.mounted) {
+          final provider = Provider.of<HomeProvider>(context, listen: false);
+          provider.loadDocuments();
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Document updated successfully'),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Convert image bytes to PDF and save to download folder and database
   Future<void> _convertImageToPDFAndSave({
     required Uint8List imageBytes,
     required String fileName,
   }) async {
     try {
-      // Create PDF document
-      final PdfDocument pdfDocument = PdfDocument();
+      // Create PDF document using pdf package
+      final pdf = pw.Document();
       
-      // Add a page
-      final PdfPage page = pdfDocument.pages.add();
-      final Size pageSize = page.size;
-
-      // Create bitmap from image bytes
-      final PdfBitmap image = PdfBitmap(imageBytes);
-      final double imageWidth = image.width.toDouble();
-      final double imageHeight = image.height.toDouble();
-
-      // Calculate aspect ratio and fit image to page
-      final double pageAspect = pageSize.width / pageSize.height;
-      final double imageAspect = imageWidth / imageHeight;
-
-      double drawWidth, drawHeight, drawX, drawY;
-
-      if (imageAspect > pageAspect) {
-        // Image is wider - fit to width
-        drawWidth = pageSize.width;
-        drawHeight = pageSize.width / imageAspect;
-        drawX = 0;
-        drawY = (pageSize.height - drawHeight) / 2;
-      } else {
-        // Image is taller - fit to height
-        drawHeight = pageSize.height;
-        drawWidth = pageSize.height * imageAspect;
-        drawX = (pageSize.width - drawWidth) / 2;
-        drawY = 0;
-      }
-
-      // Draw image on page
-      page.graphics.drawImage(
-        image,
-        Rect.fromLTWH(
-          drawX,
-          drawY,
-          drawWidth,
-          drawHeight,
+      // Create PDF image from bytes
+      final pdfImage = pw.MemoryImage(imageBytes);
+      
+      // Get image dimensions (approximate for pdf package)
+      // We'll use full page size and let it fit
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          build: (pw.Context context) {
+            return pw.Center(
+              child: pw.Image(
+                pdfImage,
+                fit: pw.BoxFit.contain,
+              ),
+            );
+          },
         ),
       );
 
       // Save PDF to bytes
-      final List<int> pdfBytesList = await pdfDocument.save();
-      pdfDocument.dispose();
+      final List<int> pdfBytesList = await pdf.save();
       final Uint8List pdfBytes = Uint8List.fromList(pdfBytesList);
 
-      // Save to device Download folder (public Downloads folder) - same as tools_screen.dart
+      // Save to device Download folder (public Downloads folder)
       Directory downloadDir;
       String? savedFilePath;
       
@@ -226,7 +326,7 @@ class PhotoEditorService {
         final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
         final String finalFileName = '${baseFileName}_$timestamp.pdf';
         
-        // Save PDF file
+        // Save PDF file to download folder
         final File pdfFile = File('${downloadDir.path}/$finalFileName');
         await pdfFile.writeAsBytes(pdfBytes);
         savedFilePath = pdfFile.path;
@@ -248,7 +348,27 @@ class PhotoEditorService {
           }
         }
 
-        print('PDF saved to: $savedFilePath');
+        print('PDF saved to download folder: $savedFilePath');
+        
+        // Save PDF to database using FileStorageService
+        try {
+          final fileStorageService = FileStorageService.instance;
+          final docId = await fileStorageService.savePDFFile(
+            pdfBytes: pdfBytes,
+            fileName: finalFileName,
+            title: baseFileName,
+          );
+          
+          if (docId != null) {
+            print('PDF saved to database with ID: $docId');
+          } else {
+            print('Warning: PDF saved to download folder but failed to save to database');
+          }
+        } catch (e) {
+          print('Error saving PDF to database: $e');
+          // Continue even if database save fails - at least it's saved to download folder
+        }
+        
       } catch (e) {
         print('Error saving PDF to device Download folder: $e');
         // Re-throw to be handled by caller

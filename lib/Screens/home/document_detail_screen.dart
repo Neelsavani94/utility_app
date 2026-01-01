@@ -5,6 +5,8 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:saver_gallery/saver_gallery.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../Models/document_detail_model.dart';
 import '../../Models/document_model.dart';
@@ -15,6 +17,8 @@ import '../../Services/clipboard_service.dart';
 import '../../Services/tag_service.dart';
 import '../../Routes/navigation_service.dart';
 import '../../Providers/home_provider.dart';
+import '../../Constants/app_constants.dart';
+import '../manual_scanner/custom_scanner_screen.dart';
 import 'package:provider/provider.dart';
 
 class DocumentDetailScreen extends StatefulWidget {
@@ -29,14 +33,6 @@ class DocumentDetailScreen extends StatefulWidget {
 
 class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
-  final DocumentScanner _documentScanner = DocumentScanner(
-    options: DocumentScannerOptions(
-      documentFormat: DocumentFormat.jpeg,
-      mode: ScannerMode.filter,
-      pageLimit: 1,
-      isGalleryImport: true,
-    ),
-  );
   final DocumentScanService _scanService = DocumentScanService();
   final ClipboardService _clipboardService = ClipboardService.instance;
   List<DocumentDetail> _documentDetails = [];
@@ -263,32 +259,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Container(
-                  height: 48,
-                  width: 48,
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.grey[850] : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: isDark
-                            ? Colors.black.withOpacity(0.3)
-                            : Colors.black.withOpacity(0.05),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.more_vert,
-                      color: isDark ? Colors.white : Colors.black87,
-                    ),
-                    onPressed: () => _showOptionsMenu(context),
-                  ),
-                ),
-              ],
+                ],
             ),
           ),
 
@@ -351,13 +322,11 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         color: Colors.transparent,
         child: InkWell(
           onTap: () async {
-            final result = await _documentScanner.scanDocument();
-            await _scanService.scanAndAddPagesToDocument(
-              documentId: widget.document.id!,
-              result: result,
+            await _requestCameraPermissionAndShowDialog(
+              context,
+              colorScheme,
+              isDark,
             );
-            // Reload details so GridView reflects new pages
-            await _loadDocumentDetails();
           },
           borderRadius: BorderRadius.circular(32),
           child: const Icon(
@@ -368,6 +337,147 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _requestCameraPermissionAndShowDialog(
+    BuildContext context,
+    ColorScheme colorScheme,
+    bool isDark,
+  ) async {
+    // Request camera permission
+    final status = await Permission.camera.request();
+
+    if (status.isGranted) {
+      // Permission granted, navigate to custom scanner screen
+      if (context.mounted) {
+        // Pass documentId to CustomScannerScreen so images are saved to DocumentDetail table
+        final documentId = widget.document.id;
+        final scannerResult = await Navigator.push<String>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CustomScannerScreen(
+              documentId: documentId,
+            ),
+          ),
+        );
+
+        // If AI scanner was selected, open it and add pages to document
+        if (scannerResult == 'ai' && context.mounted) {
+          await _scanWithAIScannerForDocumentDetail();
+        }
+        
+        // Reload document details after returning from scanner
+        if (context.mounted) {
+          await _loadDocumentDetails();
+          final provider = Provider.of<HomeProvider>(context, listen: false);
+          provider.loadDocuments();
+        }
+      }
+    } else if (status.isDenied) {
+      // Permission denied, show message
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Camera permission is required to use this feature',
+            ),
+            backgroundColor: colorScheme.error,
+            action: SnackBarAction(
+              label: 'Settings',
+              textColor: Colors.white,
+              onPressed: () {
+                openAppSettings();
+              },
+            ),
+          ),
+        );
+      }
+    } else if (status.isPermanentlyDenied) {
+      // Permission permanently denied, open app settings
+      if (context.mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Camera Permission Required'),
+            content: const Text(
+              'Camera permission is required to use this feature. Please enable it in app settings.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  openAppSettings();
+                },
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _scanWithAIScannerForDocumentDetail() async {
+    try {
+      if (widget.document.id == null) {
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: 'Invalid document ID',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      // AI Document Scanner with filter mode
+      final aiScanner = DocumentScanner(
+        options: DocumentScannerOptions(
+          documentFormat: DocumentFormat.jpeg,
+          mode: ScannerMode.filter,
+          pageLimit: 1,
+          isGalleryImport: true,
+        ),
+      );
+
+      DocumentScanningResult result = await aiScanner.scanDocument();
+      developer.log(result.images.toString());
+      
+      // Add pages to existing document
+      await _scanService.scanAndAddPagesToDocument(
+        documentId: widget.document.id!,
+        result: result,
+      );
+
+      // Reload document details after adding pages
+      if (mounted) {
+        await _loadDocumentDetails();
+        Fluttertoast.showToast(
+          msg: 'Pages added successfully',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.green,
+          textColor: Colors.white,
+        );
+      }
+    } catch (e) {
+      developer.log('Error in AI Scanner for Document Detail: $e');
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error scanning document: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
   }
 
   Widget _buildEmptyState() {
@@ -660,12 +770,26 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       return;
     }
 
-    // Open ProImageEditor directly
+    // Check if this is an existing document detail (has an ID) to update it
+    // Otherwise, create a new entry
     final photoEditorService = PhotoEditorService.instance;
-    await photoEditorService.openEditorAndSave(
-      context: context,
-      imageFile: file,
-    );
+    if (detail.id != null && detail.id! > 0) {
+      // Update existing document detail
+      await photoEditorService.openEditorAndUpdateDocumentDetail(
+        context: context,
+        imageFile: file,
+        documentDetailId: detail.id!,
+      );
+      
+      // Reload document details after update
+      await _loadDocumentDetails();
+    } else {
+      // Create new entry (fallback for cases where detail doesn't have an ID)
+      await photoEditorService.openEditorAndSave(
+        context: context,
+        imageFile: file,
+      );
+    }
   }
 
   Widget _buildImage(DocumentDetail detail) {
@@ -907,11 +1031,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                       icon: Icons.delete_outline,
                       title: 'Trash',
                       color: Colors.red,
-                      onTap: () async {
+                      onTap: () {
                         Navigator.pop(context);
-                        // await _dbHelper.moveDocumentDetailToTrash(detail.id!); // TODO: Implement moveDocumentDetailToTrash method
-                        await _dbHelper.softDeleteDocumentDetail(detail.id!);
-                        await _loadDocumentDetails();
+                        _handleTrashDetail(detail);
                       },
                     ),
                   ],
@@ -1364,23 +1486,29 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
     final filePath = detail.imagePath;
     
     if (filePath.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('File path not available'),
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'File path not available',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
           backgroundColor: Colors.red,
-        ),
-      );
+          textColor: Colors.white,
+        );
+      }
       return;
     }
 
     final sourceFile = File(filePath);
     if (!await sourceFile.exists()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('File not found'),
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'File not found',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
           backgroundColor: Colors.red,
-        ),
-      );
+          textColor: Colors.white,
+        );
+      }
       return;
     }
 
@@ -1388,74 +1516,145 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       final isPDF = filePath.toLowerCase().endsWith('.pdf');
 
       if (isPDF) {
-        // For PDF, save to downloads directory
-        final directory = await getApplicationDocumentsDirectory();
-        final downloadsDir = Directory('${directory.path}/Download/Scanify AI');
-        if (!await downloadsDir.exists()) {
-          await downloadsDir.create(recursive: true);
+        // For PDF, save to device Download folder (public Downloads folder)
+        Directory? pdfDir;
+        if (Platform.isAndroid) {
+          // For Android, use the public Downloads directory
+          final List<String> possiblePaths = [
+            '/storage/emulated/0/Download',
+            '/sdcard/Download',
+            '/storage/sdcard0/Download',
+            '/mnt/sdcard/Download',
+          ];
+          
+          bool pathFound = false;
+          Directory? tempDir;
+          for (final pathStr in possiblePaths) {
+            try {
+              tempDir = Directory(pathStr);
+              if (await tempDir.exists()) {
+                pathFound = true;
+                break;
+              } else {
+                try {
+                  await tempDir.create(recursive: true);
+                  if (await tempDir.exists()) {
+                    pathFound = true;
+                    break;
+                  }
+                } catch (e) {
+                  continue;
+                }
+              }
+            } catch (e) {
+              continue;
+            }
+          }
+          
+          if (!pathFound || tempDir == null) {
+            throw Exception('Cannot access device Download folder. Please check storage permissions.');
+          } else {
+            pdfDir = tempDir;
+          }
+        } else if (Platform.isIOS) {
+          final directory = await getApplicationDocumentsDirectory();
+          pdfDir = Directory('${directory.path}/Download');
+          if (!await pdfDir.exists()) {
+            await pdfDir.create(recursive: true);
+          }
         }
 
-        final fileName = detail.title.replaceAll(RegExp(r'[^\w\s-]'), '');
-        final destFile = File('${downloadsDir.path}/$fileName.pdf');
-        await sourceFile.copy(destFile.path);
+        if (pdfDir == null) {
+          throw Exception('Could not determine PDF save location');
+        }
+
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final sanitizedName = detail.title.replaceAll(RegExp(r'[^\w\s-]'), '_');
+        final pdfFileName = '${sanitizedName}_$timestamp.pdf';
+        final pdfPath = '${pdfDir.path}/$pdfFileName';
+        await sourceFile.copy(pdfPath);
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Saved "${detail.title}" to Downloads'),
-              backgroundColor: colorScheme.primary,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              duration: const Duration(seconds: 2),
-            ),
+          Fluttertoast.showToast(
+            msg: 'PDF saved: $pdfFileName\nLocation: Downloads folder',
+            toastLength: Toast.LENGTH_LONG,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: colorScheme.primary,
+            textColor: Colors.white,
           );
         }
       } else {
-        // For images, save to Pictures directory
+        // For images, use SaverGallery to save to gallery
         try {
-          Directory? picturesDir;
+          // Request permission
+          PermissionStatus? status;
           if (Platform.isAndroid) {
-            final externalDir = await getExternalStorageDirectory();
-            if (externalDir != null) {
-              picturesDir = Directory(
-                '${externalDir.path.split('/Android')[0]}/Pictures/Scanify AI',
-              );
+            status = await Permission.photos.request();
+            if (!status.isGranted) {
+              status = await Permission.storage.request();
             }
           } else if (Platform.isIOS) {
-            final appDir = await getApplicationDocumentsDirectory();
-            picturesDir = Directory('${appDir.path}/Pictures/Scanify AI');
+            status = await Permission.photos.request();
           }
 
-          if (picturesDir == null) {
-            final directory = await getApplicationDocumentsDirectory();
-            picturesDir = Directory(
-              '${directory.path}/Download/Scanify AI/Pictures',
-            );
+          if (status != null && !status.isGranted && !status.isLimited) {
+            if (status.isPermanentlyDenied && mounted) {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Permission Required'),
+                  content: const Text(
+                    'Photo library permission is required to save images to gallery. '
+                    'Please enable it in app settings.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        openAppSettings();
+                      },
+                      child: const Text('Open Settings'),
+                    ),
+                  ],
+                ),
+              );
+              return;
+            }
           }
 
-          if (!await picturesDir.exists()) {
-            await picturesDir.create(recursive: true);
-          }
-
-          final fileName = detail.title.replaceAll(RegExp(r'[^\w\s-]'), '');
+          final imageBytes = await sourceFile.readAsBytes();
+          final sanitizedName = detail.title.replaceAll(RegExp(r'[^\w\s-]'), '_');
           final extension = filePath.split('.').last;
-          final destFile = File('${picturesDir.path}/$fileName.$extension');
-          await sourceFile.copy(destFile.path);
+          final fileName = '${sanitizedName}.$extension';
+
+          final result = await SaverGallery.saveImage(
+            imageBytes,
+            fileName: fileName,
+            skipIfExists: false,
+          );
 
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Saved "${detail.title}" to Gallery'),
+            if (result.isSuccess) {
+              Fluttertoast.showToast(
+                msg: 'Saved "$fileName" to gallery',
+                toastLength: Toast.LENGTH_SHORT,
+                gravity: ToastGravity.BOTTOM,
                 backgroundColor: colorScheme.primary,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                duration: const Duration(seconds: 2),
-              ),
-            );
+                textColor: Colors.white,
+              );
+            } else {
+              Fluttertoast.showToast(
+                msg: 'Failed to save image: ${result.errorMessage ?? "Unknown error"}',
+                toastLength: Toast.LENGTH_SHORT,
+                gravity: ToastGravity.BOTTOM,
+                backgroundColor: Colors.red,
+                textColor: Colors.white,
+              );
+            }
           }
         } catch (e) {
           if (mounted) {
@@ -1484,153 +1683,215 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
 
   Future<void> _handleSendMailDetail(DocumentDetail detail) async {
     final colorScheme = Theme.of(context).colorScheme;
-    final filePath = detail.imagePath;
-    
-    if (filePath.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('File path not available'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    final file = File(filePath);
-    if (!await file.exists()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('File not found'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    try {
-      final isPDF = filePath.toLowerCase().endsWith('.pdf');
-      await Share.shareXFiles(
-        [XFile(filePath)],
-        text: 'Please find the attached ${isPDF ? 'PDF' : 'image'}: ${detail.title}',
-        subject: detail.title,
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sharing "${detail.title}" via email'),
-            backgroundColor: colorScheme.primary,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        Fluttertoast.showToast(
-          msg: 'Error sharing file: $e',
-          toastLength: Toast.LENGTH_SHORT,
-          gravity: ToastGravity.BOTTOM,
-          backgroundColor: Colors.red,
-          textColor: Colors.white,
-        );
-      }
-    }
-  }
-
-  Future<void> _handleRenameDetail(DocumentDetail detail) async {
-    final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final nameController = TextEditingController(text: detail.title);
+    final emailController = TextEditingController();
 
-    final result = await showDialog<String>(
+    final result = await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: isDark
-            ? colorScheme.surface.withOpacity(0.98)
-            : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(
-          'Rename Page',
-          style: TextStyle(
-            color: colorScheme.onSurface,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        content: TextField(
-          controller: nameController,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: 'Enter new name',
-            hintStyle: TextStyle(color: colorScheme.onSurface.withOpacity(0.4)),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: colorScheme.outline.withOpacity(0.2),
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark
+                ? colorScheme.surface.withOpacity(0.98)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
               ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: colorScheme.primary, width: 2),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(AppConstants.spacingL),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.email_rounded,
+                          color: colorScheme.primary,
+                          size: 24,
+                        ),
+                        const SizedBox(width: AppConstants.spacingS),
+                        Text(
+                          'Send Mail',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => Navigator.pop(context),
+                          borderRadius: BorderRadius.circular(16),
+                          child: Icon(
+                            Icons.close_rounded,
+                            color: colorScheme.primary,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // Email Input
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(
+                    hintText: 'Enter E-mail Id',
+                    hintStyle: TextStyle(
+                      color: colorScheme.onSurface.withOpacity(0.4),
+                    ),
+                    filled: true,
+                    fillColor: isDark
+                        ? colorScheme.surface.withOpacity(0.3)
+                        : colorScheme.surface.withOpacity(0.5),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.primary,
+                        width: 2,
+                      ),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppConstants.spacingM,
+                      vertical: AppConstants.spacingM,
+                    ),
+                  ),
+                  style: TextStyle(color: colorScheme.onSurface),
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // OK Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      final email = emailController.text.trim();
+                      if (email.isNotEmpty) {
+                        Navigator.pop(context, email);
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      'OK',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          style: TextStyle(color: colorScheme.onSurface),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: TextStyle(color: colorScheme.onSurface.withOpacity(0.6)),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final newName = nameController.text.trim();
-              if (newName.isNotEmpty) {
-                Navigator.pop(context, newName);
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: colorScheme.primary,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
 
-    if (result != null && result.isNotEmpty) {
-      try {
-        final updatedDetail = detail.copyWith(
-          title: result,
-          updatedAt: DateTime.now(),
-        );
-        // await _dbHelper.updateDocumentDetail(updatedDetail); // TODO: Fix updateDocumentDetail signature
-        await _dbHelper.updateDocumentDetail(updatedDetail.id!, updatedDetail.toMap());
-        await _loadDocumentDetails();
+    if (result != null && result is String) {
+      final email = result.trim();
+      if (email.isEmpty) {
+        return;
+      }
 
-        // Refresh home provider
+      final filePath = detail.imagePath;
+      if (filePath.isEmpty) {
         if (mounted) {
-          final provider = Provider.of<HomeProvider>(context, listen: false);
-          provider.loadDocuments();
-          
+          Fluttertoast.showToast(
+            msg: 'File path not available',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      final file = File(filePath);
+      if (!await file.exists()) {
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: 'File not found',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      try {
+        final isPDF = filePath.toLowerCase().endsWith('.pdf');
+        await Share.shareXFiles(
+          [XFile(filePath)],
+          text:
+              'Please find the attached ${isPDF ? 'PDF' : 'image'}: ${detail.title}\n\nTo: $email',
+          subject: detail.title,
+        );
+
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Renamed to "$result"'),
+              content: Text(
+                'Sharing "${detail.title}" - Select email to send to $email',
+              ),
               backgroundColor: colorScheme.primary,
-              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           );
         }
       } catch (e) {
         if (mounted) {
           Fluttertoast.showToast(
-            msg: 'Error renaming: $e',
+            msg: 'Error sending email: $e',
             toastLength: Toast.LENGTH_SHORT,
             gravity: ToastGravity.BOTTOM,
             backgroundColor: Colors.red,
@@ -1641,31 +1902,237 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
     }
   }
 
-  Future<void> _handleMoveDetail(DocumentDetail detail) async {
-    // For detail, we can move it to a different document or folder
-    // For now, we'll show a message that this feature is for documents
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Move feature is available for documents, not individual pages'),
-        duration: Duration(seconds: 2),
+  Future<void> _handleRenameDetail(DocumentDetail detail) async {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final nameController = TextEditingController(text: detail.title);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: isDark ? colorScheme.surface.withOpacity(0.98) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(AppConstants.spacingL),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Handle bar
+                Container(
+                  margin: const EdgeInsets.only(bottom: AppConstants.spacingM),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colorScheme.onSurface.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                // Header
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.edit_rounded,
+                          color: colorScheme.primary,
+                          size: 24,
+                        ),
+                        const SizedBox(width: AppConstants.spacingS),
+                        Text(
+                          'Set Page Name',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => Navigator.pop(context),
+                          borderRadius: BorderRadius.circular(16),
+                          child: Icon(
+                            Icons.close_rounded,
+                            color: colorScheme.primary,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // Name Input
+                TextField(
+                  controller: nameController,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: 'Page name',
+                    hintStyle: TextStyle(
+                      color: colorScheme.onSurface.withOpacity(0.4),
+                    ),
+                    filled: true,
+                    fillColor: isDark
+                        ? colorScheme.surface.withOpacity(0.3)
+                        : colorScheme.surface.withOpacity(0.5),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.outline.withOpacity(0.2),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: colorScheme.primary,
+                        width: 2,
+                      ),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppConstants.spacingM,
+                      vertical: AppConstants.spacingM,
+                    ),
+                  ),
+                  style: TextStyle(color: colorScheme.onSurface),
+                ),
+                const SizedBox(height: AppConstants.spacingL),
+                // Rename Button
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: colorScheme.outline.withOpacity(0.3),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: Text(
+                          'Cancel',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: AppConstants.spacingM),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          final newName = nameController.text.trim();
+                          if (newName.isNotEmpty) {
+                            Navigator.pop(context);
+                            try {
+                              final updatedDetail = detail.copyWith(
+                                title: newName,
+                                updatedAt: DateTime.now(),
+                              );
+                              await _dbHelper.updateDocumentDetail(
+                                updatedDetail.id!,
+                                updatedDetail.toMap(),
+                              );
+                              await _loadDocumentDetails();
+
+                              // Refresh home provider
+                              if (mounted) {
+                                final provider =
+                                    Provider.of<HomeProvider>(context, listen: false);
+                                provider.loadDocuments();
+
+                                Fluttertoast.showToast(
+                                  msg: 'Renamed to "$newName"',
+                                  toastLength: Toast.LENGTH_SHORT,
+                                  gravity: ToastGravity.BOTTOM,
+                                  backgroundColor: colorScheme.primary,
+                                  textColor: Colors.white,
+                                );
+                              }
+                            } catch (e) {
+                              if (mounted) {
+                                Fluttertoast.showToast(
+                                  msg: 'Error renaming: $e',
+                                  toastLength: Toast.LENGTH_SHORT,
+                                  gravity: ToastGravity.BOTTOM,
+                                  backgroundColor: Colors.red,
+                                  textColor: Colors.white,
+                                );
+                              }
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colorScheme.primary,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          elevation: 0,
+                        ),
+                        child: Text(
+                          'Rename',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  Future<void> _handleCopyDetail(DocumentDetail detail) async {
-    final colorScheme = Theme.of(context).colorScheme;
+  Future<void> _handleMoveDetail(DocumentDetail detail) async {
+    final provider = Provider.of<HomeProvider>(context, listen: false);
     
     try {
       // Get the parent document
-      // final document = await _dbHelper.getDocumentById(detail.documentId); // TODO: Implement getDocumentById method
       final documentMap = await _dbHelper.getDocument(detail.documentId);
       if (documentMap == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Document not found'),
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: 'Document not found',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
             backgroundColor: Colors.red,
-          ),
-        );
+            textColor: Colors.white,
+          );
+        }
         return;
       }
 
@@ -1686,22 +2153,59 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         isDeleted: (documentMap['is_deleted'] as int? ?? 0) == 1,
       );
 
-      // Store document in clipboard
-      _clipboardService.copyDocument(document);
+      // Get document ID
+      final documentId = document.id;
+      if (documentId == null) {
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: 'Invalid document ID',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
 
+      // Get all DocumentDetail entries for this document
+      final documentDetails = await _dbHelper
+          .getDocumentDetailsByDocumentIdNotDeleted(documentId);
+
+      if (documentDetails.isEmpty) {
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: 'No items found in this document',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.orange,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      // Convert Document to DocumentModel
+      final documentModel = DocumentModel.fromDocument(document);
+
+      // Navigate to MoveCopyScreen
+      await NavigationService.toMoveCopy(
+        arguments: {
+          'document': documentModel,
+          'action': 'Move',
+          'documentDetails': documentDetails,
+        },
+      );
+
+      // Reload after move
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Document copied: ${document.title}'),
-            backgroundColor: colorScheme.primary,
-            duration: const Duration(seconds: 2),
-          ),
-        );
+        await _loadDocumentDetails();
+        provider.loadDocuments();
       }
     } catch (e) {
       if (mounted) {
         Fluttertoast.showToast(
-          msg: 'Error copying: $e',
+          msg: 'Error moving document: $e',
           toastLength: Toast.LENGTH_SHORT,
           gravity: ToastGravity.BOTTOM,
           backgroundColor: Colors.red,
@@ -1709,6 +2213,260 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         );
       }
     }
+  }
+
+  Future<void> _handleCopyDetail(DocumentDetail detail) async {
+    final provider = Provider.of<HomeProvider>(context, listen: false);
+    
+    try {
+      // Get the parent document
+      final documentMap = await _dbHelper.getDocument(detail.documentId);
+      if (documentMap == null) {
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: 'Document not found',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      // Convert Map to Document object
+      final document = Document(
+        id: documentMap['id'] as int?,
+        title: documentMap['title'] as String,
+        type: documentMap['type'] as String,
+        isFavourite: (documentMap['favourite'] as int? ?? 0) == 1,
+        imagePath: documentMap['Image_path'] as String? ?? '',
+        thumbnailPath: documentMap['image_thumbnail'] as String?,
+        createdAt: documentMap['created_date'] != null
+            ? DateTime.parse(documentMap['created_date'] as String)
+            : DateTime.now(),
+        updatedAt: documentMap['updated_date'] != null
+            ? DateTime.parse(documentMap['updated_date'] as String)
+            : DateTime.now(),
+        isDeleted: (documentMap['is_deleted'] as int? ?? 0) == 1,
+      );
+
+      // Get document ID
+      final documentId = document.id;
+      if (documentId == null) {
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: 'Invalid document ID',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.red,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      // Get all DocumentDetail entries for this document
+      final documentDetails = await _dbHelper
+          .getDocumentDetailsByDocumentIdNotDeleted(documentId);
+
+      if (documentDetails.isEmpty) {
+        if (mounted) {
+          Fluttertoast.showToast(
+            msg: 'No items found in this document',
+            toastLength: Toast.LENGTH_SHORT,
+            gravity: ToastGravity.BOTTOM,
+            backgroundColor: Colors.orange,
+            textColor: Colors.white,
+          );
+        }
+        return;
+      }
+
+      // Convert Document to DocumentModel
+      final documentModel = DocumentModel.fromDocument(document);
+
+      // Navigate to MoveCopyScreen
+      await NavigationService.toMoveCopy(
+        arguments: {
+          'document': documentModel,
+          'action': 'Copy',
+          'documentDetails': documentDetails,
+        },
+      );
+
+      // Reload after copy
+      if (mounted) {
+        await _loadDocumentDetails();
+        provider.loadDocuments();
+      }
+    } catch (e) {
+      if (mounted) {
+        Fluttertoast.showToast(
+          msg: 'Error copying document: $e',
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    }
+  }
+
+  Future<void> _handleTrashDetail(DocumentDetail detail) async {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: isDark ? colorScheme.surface.withOpacity(0.98) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(AppConstants.spacingXL),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Warning Icon
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.warning_rounded,
+                          color: Colors.white,
+                          size: 36,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // Title
+                Text(
+                  'Are you Sure ?',
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: AppConstants.spacingS),
+                // Message
+                Text(
+                  'You want to move to Trash ?',
+                  style: TextStyle(
+                    color: colorScheme.onSurface.withOpacity(0.7),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: AppConstants.spacingXL),
+                // Buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: colorScheme.outline.withOpacity(0.3),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: Text(
+                          'Cancel',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: AppConstants.spacingM),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          try {
+                            await _dbHelper.softDeleteDocumentDetail(detail.id!);
+                            await _loadDocumentDetails();
+
+                            // Refresh home provider
+                            if (mounted) {
+                              final provider =
+                                  Provider.of<HomeProvider>(context, listen: false);
+                              provider.loadDocuments();
+
+                              Fluttertoast.showToast(
+                                msg: '"${detail.title}" moved to trash',
+                                toastLength: Toast.LENGTH_SHORT,
+                                gravity: ToastGravity.BOTTOM,
+                                backgroundColor: Colors.red,
+                                textColor: Colors.white,
+                              );
+                            }
+                          } catch (e) {
+                            if (mounted) {
+                              Fluttertoast.showToast(
+                                msg: 'Error moving to trash: $e',
+                                toastLength: Toast.LENGTH_SHORT,
+                                gravity: ToastGravity.BOTTOM,
+                                backgroundColor: Colors.red,
+                                textColor: Colors.white,
+                              );
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          elevation: 0,
+                        ),
+                        child: Text(
+                          'Trash',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   // ==================== Document Handlers ====================
